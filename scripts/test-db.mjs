@@ -340,6 +340,30 @@ We investigate sparse attention mechanisms with KaTeX formula $E = mc^2$ and uni
     await migratedDb.deletePaper(mdImport.paper.id, legacyDir);
     assert.equal(fs.existsSync(storedMdPath), false, 'Managed .md file should be deleted on deletePaper');
 
+    // 14. Windows file-handle safety: byte-range slice + aborted stream followed by immediate deletePaper
+    const handlePdfSrc = path.join(tempRoot, 'range-handle.pdf');
+    fs.writeFileSync(handlePdfSrc, '%PDF-1.4\n' + 'A'.repeat(4096) + '\n%%EOF\n', 'utf-8');
+    const handleImport = await migratedDb.importPdfFile(handlePdfSrc, null, legacyDir);
+    assert.equal(handleImport.status, 'imported');
+    const managedHandlePdf = path.join(legacyDir, 'pdfs', `${handleImport.paper.sha256}.pdf`);
+
+    const fh = await fs.promises.open(managedHandlePdf, 'r');
+    try {
+      const sliceBuf = Buffer.alloc(16);
+      await fh.read(sliceBuf, 0, 16, 0);
+      assert.equal(sliceBuf.subarray(0, 5).toString('utf-8'), '%PDF-');
+    } finally {
+      await fh.close();
+    }
+
+    const abortStream = fs.createReadStream(managedHandlePdf);
+    await new Promise((resolve) => {
+      abortStream.once('close', resolve);
+      abortStream.destroy();
+    });
+    await migratedDb.deletePaper(handleImport.paper.id, legacyDir);
+    assert.equal(fs.existsSync(managedHandlePdf), false, 'PDF should delete cleanly without EBUSY after range/abort');
+
     migratedDb.close();
 
     console.log('ALL_DB_TESTS_PASSED');

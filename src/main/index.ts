@@ -2,8 +2,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { dirname } from 'node:path';
 import { Readable } from 'node:stream';
-import { fileURLToPath, pathToFileURL } from 'node:url';
-import { app, BrowserWindow, dialog, ipcMain, net, protocol, shell } from 'electron';
+import { fileURLToPath } from 'node:url';
+import { app, BrowserWindow, dialog, ipcMain, protocol, shell } from 'electron';
 import { DataDirLock } from './dataLock.js';
 import { FoxReaderDatabase } from './database.js';
 import { checkLatestGithubRelease, fetchOpenAlexMetadata, translateSelectionText } from './onlineMetadata.js';
@@ -125,6 +125,49 @@ function parseByteRange(rangeHeader: string, fileSize: number): { start: number;
   return { start, end };
 }
 
+const MAX_SYNC_RANGE_BYTES = 4 * 1024 * 1024;
+
+async function readFileSlice(filePath: string, start: number, end: number): Promise<Uint8Array> {
+  const length = end - start + 1;
+  const buffer = Buffer.allocUnsafe(length);
+  const fh = await fs.promises.open(filePath, 'r');
+  try {
+    let totalRead = 0;
+    while (totalRead < length) {
+      const { bytesRead } = await fh.read(buffer, totalRead, length - totalRead, start + totalRead);
+      if (bytesRead === 0) break;
+      totalRead += bytesRead;
+    }
+    return new Uint8Array(buffer.buffer, buffer.byteOffset, totalRead);
+  } finally {
+    await fh.close();
+  }
+}
+
+function createAbortableStreamResponse(
+  stream: fs.ReadStream,
+  signal: AbortSignal | undefined,
+  status: number,
+  headers: Record<string, string>,
+): Response {
+  const onAbort = () => {
+    stream.destroy();
+  };
+  if (signal?.aborted) {
+    stream.destroy();
+  } else if (signal) {
+    signal.addEventListener('abort', onAbort, { once: true });
+    stream.once('close', () => signal.removeEventListener('abort', onAbort));
+  }
+  stream.on('error', () => {
+    // Ignore stream errors triggered by request cancellation
+  });
+  return new Response(
+    Readable.toWeb(stream) as unknown as NonNullable<ConstructorParameters<typeof Response>[0]>,
+    { status, headers },
+  );
+}
+
 function registerFoxPdfProtocol(): void {
   protocol.handle('foxpdf', async (request) => {
     try {
@@ -147,6 +190,16 @@ function registerFoxPdfProtocol(): void {
           return new Response('PDF not found', { status: 404 });
         }
         const fileSize = stat.size;
+        if (request.method === 'HEAD') {
+          return new Response(null, {
+            status: 200,
+            headers: {
+              'Content-Type': 'application/pdf',
+              'Accept-Ranges': 'bytes',
+              'Content-Length': String(fileSize),
+            },
+          });
+        }
         if (fileSize === 0) {
           return new Response(new Uint8Array(0), {
             status: 200,
@@ -169,34 +222,29 @@ function registerFoxPdfProtocol(): void {
           }
           if (byteRange) {
             const { start, end } = byteRange;
+            const rangeLen = end - start + 1;
+            const headers = {
+              'Content-Type': 'application/pdf',
+              'Accept-Ranges': 'bytes',
+              'Content-Range': `bytes ${start}-${end}/${fileSize}`,
+              'Content-Length': String(rangeLen),
+            };
+            // Close file handles immediately on chunked PDF.js reads to avoid Windows EBUSY on delete
+            if (rangeLen <= MAX_SYNC_RANGE_BYTES) {
+              const slice = await readFileSlice(targetPath, start, end);
+              return new Response(slice, { status: 206, headers });
+            }
             const stream = fs.createReadStream(targetPath, { start, end });
-            return new Response(
-              Readable.toWeb(stream) as unknown as NonNullable<ConstructorParameters<typeof Response>[0]>,
-              {
-                status: 206,
-                headers: {
-                  'Content-Type': 'application/pdf',
-                  'Accept-Ranges': 'bytes',
-                  'Content-Range': `bytes ${start}-${end}/${fileSize}`,
-                  'Content-Length': String(end - start + 1),
-                },
-              },
-            );
+            return createAbortableStreamResponse(stream, request.signal, 206, headers);
           }
         }
 
         const stream = fs.createReadStream(targetPath);
-        return new Response(
-          Readable.toWeb(stream) as unknown as NonNullable<ConstructorParameters<typeof Response>[0]>,
-          {
-            status: 200,
-            headers: {
-              'Content-Type': 'application/pdf',
-              'Accept-Ranges': 'bytes',
-              'Content-Length': String(fileSize),
-            },
-          },
-        );
+        return createAbortableStreamResponse(stream, request.signal, 200, {
+          'Content-Type': 'application/pdf',
+          'Accept-Ranges': 'bytes',
+          'Content-Length': String(fileSize),
+        });
       }
 
       if (parsed.hostname === 'snapshot') {
@@ -208,10 +256,18 @@ function registerFoxPdfProtocol(): void {
         if (!targetPath.startsWith(snapshotsRoot + path.sep)) {
           return new Response('Forbidden', { status: 403 });
         }
-        if (!fs.existsSync(targetPath)) {
+        try {
+          const data = await fs.promises.readFile(targetPath);
+          return new Response(new Uint8Array(data), {
+            status: 200,
+            headers: {
+              'Content-Type': 'image/png',
+              'Cache-Control': 'public, max-age=3600',
+            },
+          });
+        } catch {
           return new Response('Snapshot not found', { status: 404 });
         }
-        return net.fetch(pathToFileURL(targetPath).toString());
       }
 
       if (parsed.hostname === 'assets') {
