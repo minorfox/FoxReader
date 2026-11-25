@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import type {
   CreateAnnotationInput,
+  EnrichPaperOnlineInput,
   FoxReaderApi,
   PaperListQuery,
   UpdateAnnotationInput,
@@ -11,6 +12,8 @@ const api: FoxReaderApi = {
   getSettings: () => ipcRenderer.invoke('app:getSettings'),
   selectDataDir: () => ipcRenderer.invoke('app:selectDataDir'),
   openDataDir: () => ipcRenderer.invoke('app:openDataDir'),
+  checkForUpdates: () => ipcRenderer.invoke('app:checkUpdate'),
+  openExternalUrl: (url: string) => ipcRenderer.invoke('app:openExternal', url),
   getLibraryOverview: () => ipcRenderer.invoke('library:getOverview'),
   createFolder: (name: string, parentId: string | null) =>
     ipcRenderer.invoke('folders:create', name, parentId),
@@ -23,6 +26,8 @@ const api: FoxReaderApi = {
     ipcRenderer.invoke('papers:pickAndImport', folderId),
   updatePaperMetadata: (paperId: string, input: UpdatePaperMetadataInput) =>
     ipcRenderer.invoke('papers:updateMetadata', paperId, input),
+  enrichPaperOnline: (input: EnrichPaperOnlineInput) =>
+    ipcRenderer.invoke('papers:enrichOnline', input),
   movePaperToFolder: (paperId: string, folderId: string | null) =>
     ipcRenderer.invoke('papers:moveToFolder', paperId, folderId),
   updatePaperProgress: (paperId: string, lastPage: number, lastZoom: number) =>

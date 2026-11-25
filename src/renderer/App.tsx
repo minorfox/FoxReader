@@ -40,7 +40,10 @@ function sortAnnotations(items: Annotation[]): Annotation[] {
 
 export function App() {
   const [dataDir, setDataDir] = useState('');
+  const [appVersion, setAppVersion] = useState('0.1.0');
   const [lockWarning, setLockWarning] = useState<DataDirLockInfo | null>(null);
+  const [reextractingMeta, setReextractingMeta] = useState(false);
+  const [enrichingOnline, setEnrichingOnline] = useState(false);
   const [overview, setOverview] = useState<LibraryOverview>({
     folders: [],
     totalCount: 0,
@@ -127,6 +130,7 @@ export function App() {
   useEffect(() => {
     void window.foxreader.getSettings().then((s) => {
       setDataDir(s.dataDir);
+      setAppVersion(s.appVersion || '0.1.0');
       setLockWarning(s.lockWarning ?? null);
     });
     void refreshOverview();
@@ -187,6 +191,8 @@ export function App() {
               pageCount: meta.pageCount,
               ...(meta.title ? { title: meta.title } : {}),
               ...(meta.authors ? { authors: meta.authors } : {}),
+              ...(meta.affiliations ? { affiliations: meta.affiliations } : {}),
+              ...(meta.year ? { year: meta.year } : {}),
             });
             await refreshPapers();
           });
@@ -307,6 +313,75 @@ export function App() {
     await refreshAll();
     pushToast('success', '论文元数据与标签已更新');
   };
+
+  const handleSearchByTerm = useCallback(
+    (term: string) => {
+      const clean = term.trim();
+      if (!clean) return;
+      setSearchQuery(clean);
+      setDebouncedSearch(clean);
+      if (leftCollapsed) {
+        setLeftCollapsed(false);
+      }
+      pushToast('info', `已按「${clean}」搜索论文库`);
+    },
+    [leftCollapsed, pushToast],
+  );
+
+  const handleReextractMetadata = useCallback(
+    async (paper: Paper) => {
+      setReextractingMeta(true);
+      try {
+        const meta = await extractPdfMetadata(paper.sha256);
+        if (!meta || (!meta.title && !meta.authors && !meta.affiliations && !meta.year)) {
+          pushToast('warning', '未能从 PDF 首页识别出有效标题、作者或机构信息');
+          return;
+        }
+        await window.foxreader.updatePaperMetadata(paper.id, {
+          pageCount: meta.pageCount,
+          ...(meta.title ? { title: meta.title } : {}),
+          ...(meta.authors ? { authors: meta.authors } : {}),
+          ...(meta.affiliations ? { affiliations: meta.affiliations } : {}),
+          ...(meta.year ? { year: meta.year } : {}),
+        });
+        await refreshPapers();
+        pushToast('success', '已重新识别论文标题、作者与机构');
+      } finally {
+        setReextractingMeta(false);
+      }
+    },
+    [pushToast, refreshPapers],
+  );
+
+  const handleEnrichOnline = useCallback(
+    async (paper: Paper) => {
+      setEnrichingOnline(true);
+      try {
+        const localMeta = await extractPdfMetadata(paper.sha256);
+        const res = await window.foxreader.enrichPaperOnline({
+          titleHint: localMeta?.title || paper.title,
+          doiHint: localMeta?.doi,
+        });
+        if (!res.matched) {
+          pushToast('warning', res.error || '未能联网匹配到该论文信息');
+          return;
+        }
+        await window.foxreader.updatePaperMetadata(paper.id, {
+          ...(res.title ? { title: res.title } : {}),
+          ...(res.authors ? { authors: res.authors } : {}),
+          ...(res.affiliations ? { affiliations: res.affiliations } : {}),
+          ...(res.year !== undefined ? { year: res.year } : {}),
+        });
+        await refreshPapers();
+        pushToast('success', `已通过 ${res.source || 'OpenAlex'} 补全作者与机构信息`);
+      } catch (error) {
+        pushToast('error', `联网补全失败：${error instanceof Error ? error.message : String(error)}`);
+      } finally {
+        setEnrichingOnline(false);
+      }
+    },
+    [pushToast, refreshPapers],
+  );
 
   const handleConfirmDeletePaper = async () => {
     if (!confirmDeletePaper) return;
@@ -579,12 +654,18 @@ export function App() {
           activeTab={rightTab}
           selectedAnnotationId={selectedAnnotationId}
           cardRevealRequest={cardRevealRequest}
+          reextractingMeta={reextractingMeta}
+          enrichingOnline={enrichingOnline}
           onChangeTab={setRightTab}
           onJumpToAnnotation={handleJumpToAnnotation}
           onUpdateAnnotation={handleUpdateAnnotation}
           onDeleteAnnotation={handleDeleteAnnotation}
           onSaveNote={handleSaveNote}
           onCopyText={handleCopyText}
+          onSearchTerm={handleSearchByTerm}
+          onEditPaperMetadata={setEditingPaper}
+          onReextractMetadata={handleReextractMetadata}
+          onEnrichOnline={handleEnrichOnline}
         />
       )}
 
@@ -670,9 +751,12 @@ export function App() {
       <SettingsModal
         open={settingsOpen}
         dataDir={dataDir}
+        appVersion={appVersion}
         onClose={() => setSettingsOpen(false)}
         onSelectDataDir={handleSelectDataDir}
         onOpenDataDir={() => window.foxreader.openDataDir()}
+        onCheckForUpdates={() => window.foxreader.checkForUpdates()}
+        onOpenExternalUrl={(url) => window.foxreader.openExternalUrl(url)}
       />
 
       <LockWarningModal

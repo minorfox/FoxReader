@@ -10,6 +10,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Batch paper selection (including `Shift + Click` range selection and Select All) and batch deletion in the left library sidebar.
+- Automatic 3-tier PDF Page-1 title, author, affiliation, year, and DOI extraction on import (with offline re-extraction), replacing raw filenames with real paper titles while filtering publisher chrome and dirty metadata.
+- Right-sidebar collapsible **「作者与机构」** card displaying clickable author and institution search chips (`affiliations` stored in SQLite + FTS5/CJK search with automatic schema migration) and an optional **「联网补全」** OpenAlex lookup button.
+- Manual **「检查更新」** check in Settings (`SettingsModal`) querying GitHub Releases without auto-downloading binaries or breaking offline-first defaults.
 
 ## [0.1.0] - 2026-11-25
 

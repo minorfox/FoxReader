@@ -58,6 +58,7 @@ interface PaperRow {
   sha256: string;
   title: string;
   authors: string;
+  affiliations: string;
   year: number | null;
   folder_id: string | null;
   status: PaperStatus;
@@ -190,6 +191,7 @@ export class FoxReaderDatabase {
         sha256 TEXT UNIQUE NOT NULL,
         title TEXT NOT NULL,
         authors TEXT NOT NULL DEFAULT '',
+        affiliations TEXT NOT NULL DEFAULT '',
         year INTEGER NULL,
         folder_id TEXT NULL REFERENCES folders(id) ON DELETE SET NULL,
         status TEXT NOT NULL DEFAULT 'unread' CHECK(status IN ('unread', 'reading', 'read')),
@@ -237,6 +239,7 @@ export class FoxReaderDatabase {
         paper_id UNINDEXED,
         title,
         authors,
+        affiliations,
         tags,
         quote_text,
         comment,
@@ -248,6 +251,41 @@ export class FoxReaderDatabase {
       CREATE INDEX IF NOT EXISTS idx_papers_status ON papers(status);
       CREATE INDEX IF NOT EXISTS idx_annotations_paper ON annotations(paper_id, page_number);
     `);
+    this.migrateSchema();
+  }
+
+  private migrateSchema(): void {
+    const paperCols = this.db
+      .prepare('PRAGMA table_info(papers)')
+      .all() as Array<{ name: string }>;
+    if (!paperCols.some((c) => c.name === 'affiliations')) {
+      this.db.exec(`ALTER TABLE papers ADD COLUMN affiliations TEXT NOT NULL DEFAULT '';`);
+    }
+
+    const ftsCols = this.db
+      .prepare('PRAGMA table_info(search_fts)')
+      .all() as Array<{ name: string }>;
+    if (!ftsCols.some((c) => c.name === 'affiliations')) {
+      this.runInTransaction(() => {
+        this.db.exec(`
+          DROP TABLE IF EXISTS search_fts;
+          CREATE VIRTUAL TABLE search_fts USING fts5(
+            paper_id UNINDEXED,
+            title,
+            authors,
+            affiliations,
+            tags,
+            quote_text,
+            comment,
+            content_md
+          );
+        `);
+        const rows = this.db.prepare('SELECT id FROM papers').all() as Array<{ id: string }>;
+        for (const row of rows) {
+          this.syncPaperSearchIndex(row.id);
+        }
+      });
+    }
   }
 
   private runInTransaction<T>(fn: () => T): T {
@@ -281,6 +319,7 @@ export class FoxReaderDatabase {
       sha256: row.sha256,
       title: row.title,
       authors: row.authors,
+      affiliations: row.affiliations ?? '',
       year: row.year,
       folderId: row.folder_id,
       status: row.status,
@@ -296,8 +335,8 @@ export class FoxReaderDatabase {
 
   public syncPaperSearchIndex(paperId: string): void {
     const paper = this.db
-      .prepare('SELECT id, title, authors FROM papers WHERE id = ?')
-      .get(paperId) as { id: string; title: string; authors: string } | undefined;
+      .prepare('SELECT id, title, authors, affiliations FROM papers WHERE id = ?')
+      .get(paperId) as { id: string; title: string; authors: string; affiliations: string } | undefined;
 
     this.db.prepare('DELETE FROM search_fts WHERE paper_id = ?').run(paperId);
     if (!paper) return;
@@ -323,13 +362,14 @@ export class FoxReaderDatabase {
 
     this.db
       .prepare(
-        `INSERT INTO search_fts (paper_id, title, authors, tags, quote_text, comment, content_md)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO search_fts (paper_id, title, authors, affiliations, tags, quote_text, comment, content_md)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         paperId,
         paper.title,
         paper.authors,
+        paper.affiliations,
         tagsText,
         quoteText,
         commentText,
@@ -513,6 +553,7 @@ export class FoxReaderDatabase {
       const likeClause = `(
         p.title LIKE ? COLLATE NOCASE
         OR p.authors LIKE ? COLLATE NOCASE
+        OR p.affiliations LIKE ? COLLATE NOCASE
         OR p.file_name LIKE ? COLLATE NOCASE
         OR EXISTS (SELECT 1 FROM paper_tags pt JOIN tags t ON t.id = pt.tag_id WHERE pt.paper_id = p.id AND t.name LIKE ? COLLATE NOCASE)
         OR EXISTS (SELECT 1 FROM annotations a WHERE a.paper_id = p.id AND (a.quote_text LIKE ? COLLATE NOCASE OR a.comment LIKE ? COLLATE NOCASE))
@@ -523,10 +564,10 @@ export class FoxReaderDatabase {
         conditions.push(
           `(p.id IN (SELECT paper_id FROM search_fts WHERE search_fts MATCH ?) OR ${likeClause})`,
         );
-        params.push(ftsExpr, likeTerm, likeTerm, likeTerm, likeTerm, likeTerm, likeTerm, likeTerm);
+        params.push(ftsExpr, likeTerm, likeTerm, likeTerm, likeTerm, likeTerm, likeTerm, likeTerm, likeTerm);
       } else {
         conditions.push(likeClause);
-        params.push(likeTerm, likeTerm, likeTerm, likeTerm, likeTerm, likeTerm, likeTerm);
+        params.push(likeTerm, likeTerm, likeTerm, likeTerm, likeTerm, likeTerm, likeTerm, likeTerm);
       }
     }
 
@@ -579,9 +620,9 @@ export class FoxReaderDatabase {
         this.db
           .prepare(
             `INSERT INTO papers (
-              id, sha256, title, authors, year, folder_id, status,
+              id, sha256, title, authors, affiliations, year, folder_id, status,
               page_count, last_page, last_zoom, file_name, created_at, updated_at
-            ) VALUES (?, ?, ?, '', NULL, ?, 'unread', 0, 1, 1.0, ?, ?, ?)`,
+            ) VALUES (?, ?, ?, '', '', NULL, ?, 'unread', 0, 1, 1.0, ?, ?, ?)`,
           )
           .run(id, sha256, fallbackTitle, validFolderId, fileName, now, now);
         this.syncPaperSearchIndex(id);
@@ -610,6 +651,8 @@ export class FoxReaderDatabase {
     const nextTitle =
       input.title !== undefined ? input.title.trim() || existing.title : existing.title;
     const nextAuthors = input.authors !== undefined ? input.authors.trim() : existing.authors;
+    const nextAffiliations =
+      input.affiliations !== undefined ? input.affiliations.trim() : existing.affiliations;
     const nextYear = input.year !== undefined ? input.year : existing.year;
     const nextStatus = input.status !== undefined ? input.status : existing.status;
     const nextFolderId = input.folderId !== undefined ? input.folderId : existing.folder_id;
@@ -627,10 +670,20 @@ export class FoxReaderDatabase {
       this.db
         .prepare(
           `UPDATE papers
-           SET title = ?, authors = ?, year = ?, status = ?, folder_id = ?, page_count = ?, updated_at = ?
+           SET title = ?, authors = ?, affiliations = ?, year = ?, status = ?, folder_id = ?, page_count = ?, updated_at = ?
            WHERE id = ?`,
         )
-        .run(nextTitle, nextAuthors, nextYear, nextStatus, nextFolderId, nextPageCount, now, paperId);
+        .run(
+          nextTitle,
+          nextAuthors,
+          nextAffiliations,
+          nextYear,
+          nextStatus,
+          nextFolderId,
+          nextPageCount,
+          now,
+          paperId,
+        );
       this.syncPaperSearchIndex(paperId);
     });
 
