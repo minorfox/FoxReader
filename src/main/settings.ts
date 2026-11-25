@@ -39,6 +39,7 @@ export class SettingsManager {
   public ensureDataDirStructure(dir: string): void {
     fs.mkdirSync(dir, { recursive: true });
     fs.mkdirSync(path.join(dir, 'pdfs'), { recursive: true });
+    fs.mkdirSync(path.join(dir, 'docs'), { recursive: true });
     fs.mkdirSync(path.join(dir, 'snapshots'), { recursive: true });
   }
 

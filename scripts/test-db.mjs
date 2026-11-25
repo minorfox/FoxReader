@@ -303,7 +303,43 @@ async function main() {
     const migratedPaper = migratedDb.getPaperById('legacy-1');
     assert.ok(migratedPaper);
     assert.equal(migratedPaper.affiliations, '');
+    assert.equal(migratedPaper.fileType, 'pdf');
     assert.equal(migratedDb.listPapers({ view: 'all', search: 'Quantum' }).length, 1);
+
+    // 13. Markdown document import (YAML frontmatter + FTS5 body search + read + delete)
+    const mdSourcePath = path.join(tempRoot, 'sample-note.md');
+    fs.writeFileSync(
+      mdSourcePath,
+      `---
+title: Attention Variants Survey
+author: Alice Smith, Bob Jones
+affiliation: Stanford University
+year: 2025
+---
+
+# Ignored Heading
+
+We investigate sparse attention mechanisms with KaTeX formula $E = mc^2$ and unique token MarkdownBodyXYZ.
+`,
+      'utf-8',
+    );
+    const mdImport = await migratedDb.importPdfFile(mdSourcePath, null, legacyDir);
+    assert.equal(mdImport.status, 'imported');
+    assert.equal(mdImport.paper.fileType, 'md');
+    assert.equal(mdImport.paper.title, 'Attention Variants Survey');
+    assert.equal(mdImport.paper.authors, 'Alice Smith, Bob Jones');
+    assert.equal(mdImport.paper.affiliations, 'Stanford University');
+    assert.equal(mdImport.paper.year, 2025);
+
+    const storedMdPath = path.join(legacyDir, 'docs', `${mdImport.paper.sha256}.md`);
+    assert.equal(fs.existsSync(storedMdPath), true);
+    const loadedMd = await migratedDb.readMarkdownContent(mdImport.paper.sha256, legacyDir);
+    assert.ok(loadedMd.includes('MarkdownBodyXYZ'));
+    assert.equal(migratedDb.listPapers({ view: 'all', search: 'MarkdownBodyXYZ' }).length, 1);
+
+    await migratedDb.deletePaper(mdImport.paper.id, legacyDir);
+    assert.equal(fs.existsSync(storedMdPath), false, 'Managed .md file should be deleted on deletePaper');
+
     migratedDb.close();
 
     console.log('ALL_DB_TESTS_PASSED');

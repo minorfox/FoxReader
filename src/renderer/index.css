@@ -187,3 +187,124 @@
   color: #7c3aed;
   text-decoration: underline;
 }
+
+/* Full-page Markdown document reader typography */
+.fox-markdown-doc {
+  font-size: 0.96rem;
+  line-height: 1.78;
+  color: #1e293b;
+  word-break: break-word;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.fox-markdown-doc ::selection {
+  background: rgba(139, 92, 246, 0.25);
+}
+
+.fox-markdown-doc h1,
+.fox-markdown-doc h2,
+.fox-markdown-doc h3,
+.fox-markdown-doc h4 {
+  font-weight: 700;
+  color: #0f172a;
+  margin-top: 1.35em;
+  margin-bottom: 0.55em;
+  line-height: 1.35;
+}
+
+.fox-markdown-doc h1:first-child {
+  margin-top: 0;
+}
+
+.fox-markdown-doc h1 {
+  font-size: 1.65em;
+  border-bottom: 1px solid #e2e8f0;
+  padding-bottom: 0.35em;
+}
+.fox-markdown-doc h2 { font-size: 1.32em; }
+.fox-markdown-doc h3 { font-size: 1.12em; }
+.fox-markdown-doc h4 { font-size: 1em; }
+.fox-markdown-doc p { margin: 0.75em 0; }
+.fox-markdown-doc ul,
+.fox-markdown-doc ol { margin: 0.7em 0; padding-left: 1.6em; }
+.fox-markdown-doc ul { list-style-type: disc; }
+.fox-markdown-doc ol { list-style-type: decimal; }
+.fox-markdown-doc li { margin: 0.3em 0; }
+.fox-markdown-doc blockquote {
+  margin: 0.9em 0;
+  padding: 0.45em 1em;
+  border-left: 3px solid #8b5cf6;
+  background: #f8fafc;
+  color: #475569;
+  border-radius: 0 6px 6px 0;
+}
+.fox-markdown-doc code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.86em;
+  background: #f1f5f9;
+  padding: 0.12em 0.38em;
+  border-radius: 4px;
+  color: #6d28d9;
+}
+.fox-markdown-doc pre {
+  margin: 0.9em 0;
+  padding: 0.95em 1.1em;
+  background: #0f172a;
+  color: #e2e8f0;
+  border-radius: 10px;
+  overflow-x: auto;
+  font-size: 0.85em;
+  line-height: 1.55;
+}
+.fox-markdown-doc pre code {
+  background: transparent;
+  padding: 0;
+  color: inherit;
+}
+.fox-markdown-doc table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0.9em 0;
+  font-size: 0.9em;
+}
+.fox-markdown-doc th,
+.fox-markdown-doc td {
+  border: 1px solid #e2e8f0;
+  padding: 0.45em 0.7em;
+  text-align: left;
+}
+.fox-markdown-doc th {
+  background: #f8fafc;
+  font-weight: 600;
+}
+.fox-markdown-doc hr {
+  border: none;
+  border-top: 1px solid #e2e8f0;
+  margin: 1.4em 0;
+}
+.fox-markdown-doc a {
+  color: #7c3aed;
+  text-decoration: underline;
+}
+.fox-markdown-doc img {
+  max-width: 100%;
+  border-radius: 8px;
+  margin: 0.8em 0;
+}
+.fox-markdown-doc .katex-display {
+  overflow-x: auto;
+  padding: 0.4rem 0;
+}
+
+.fox-md-mark {
+  background: rgba(250, 204, 21, 0.45);
+  color: inherit;
+  border-radius: 2px;
+  padding: 0 1px;
+}
+
+.fox-md-mark-active {
+  background: rgba(249, 115, 22, 0.55);
+  outline: 1.5px solid #ea580c;
+}

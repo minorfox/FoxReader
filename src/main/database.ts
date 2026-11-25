@@ -13,6 +13,7 @@ import type {
   LibraryOverview,
   NormalizedRect,
   Paper,
+  PaperFileType,
   PaperListQuery,
   PaperNote,
   PaperStatus,
@@ -66,6 +67,7 @@ interface PaperRow {
   last_page: number;
   last_zoom: number;
   file_name: string;
+  file_type?: PaperFileType;
   created_at: number;
   updated_at: number;
 }
@@ -145,13 +147,63 @@ function computeFileSha256(filePath: string): Promise<string> {
   });
 }
 
+function parseMarkdownHeader(
+  content: string,
+  fallbackTitle: string,
+): { title: string; authors: string; affiliations: string; year: number | null } {
+  let title = '';
+  let authors = '';
+  let affiliations = '';
+  let year: number | null = null;
+
+  const fmMatch = content.match(/^---\r?\n([\s\S]*?)\r?\n---/);
+  if (fmMatch?.[1]) {
+    for (const rawLine of fmMatch[1].split(/\r?\n/)) {
+      const m = rawLine.match(/^([A-Za-z0-9_-]+)\s*:\s*(.+)$/);
+      if (!m) continue;
+      const key = m[1].toLowerCase();
+      const val = m[2].trim().replace(/^['"\[]+|['"\]]+$/g, '').trim();
+      if (!val) continue;
+      if (key === 'title' && !title) title = val;
+      else if ((key === 'author' || key === 'authors') && !authors) authors = val;
+      else if ((key === 'affiliation' || key === 'affiliations') && !affiliations) affiliations = val;
+      else if ((key === 'year' || key === 'date') && year === null) {
+        const ym = val.match(/\b(19[5-9]\d|20[0-3]\d)\b/);
+        if (ym?.[1]) year = Number.parseInt(ym[1], 10);
+      }
+    }
+  }
+
+  if (!title) {
+    const body = fmMatch ? content.slice(fmMatch[0].length) : content;
+    const h1Match = body.match(/^\s*#\s+(.+)$/m);
+    if (h1Match?.[1]) {
+      const cleanHeading = h1Match[1]
+        .replace(/[*_`#]/g, '')
+        .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+        .trim();
+      if (cleanHeading) title = cleanHeading;
+    }
+  }
+
+  return {
+    title: title || fallbackTitle,
+    authors,
+    affiliations,
+    year,
+  };
+}
+
 export class FoxReaderDatabase {
   private readonly db: DatabaseSync;
+  private readonly dataDir: string;
   public readonly dbPath: string;
 
   constructor(dataDir: string) {
+    this.dataDir = dataDir;
     fs.mkdirSync(dataDir, { recursive: true });
     fs.mkdirSync(path.join(dataDir, 'pdfs'), { recursive: true });
+    fs.mkdirSync(path.join(dataDir, 'docs'), { recursive: true });
     fs.mkdirSync(path.join(dataDir, 'snapshots'), { recursive: true });
 
     this.dbPath = path.join(dataDir, 'library.db');
@@ -199,6 +251,7 @@ export class FoxReaderDatabase {
         last_page INTEGER NOT NULL DEFAULT 1,
         last_zoom REAL NOT NULL DEFAULT 1.0,
         file_name TEXT NOT NULL,
+        file_type TEXT NOT NULL DEFAULT 'pdf' CHECK(file_type IN ('pdf', 'md')),
         created_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL
       );
@@ -260,6 +313,9 @@ export class FoxReaderDatabase {
       .all() as Array<{ name: string }>;
     if (!paperCols.some((c) => c.name === 'affiliations')) {
       this.db.exec(`ALTER TABLE papers ADD COLUMN affiliations TEXT NOT NULL DEFAULT '';`);
+    }
+    if (!paperCols.some((c) => c.name === 'file_type')) {
+      this.db.exec(`ALTER TABLE papers ADD COLUMN file_type TEXT NOT NULL DEFAULT 'pdf';`);
     }
 
     const ftsCols = this.db
@@ -327,6 +383,7 @@ export class FoxReaderDatabase {
       lastPage: row.last_page,
       lastZoom: row.last_zoom,
       fileName: row.file_name,
+      fileType: row.file_type === 'md' ? 'md' : 'pdf',
       createdAt: row.created_at,
       updatedAt: row.updated_at,
       tags: this.getTagsForPaper(row.id),
@@ -335,8 +392,17 @@ export class FoxReaderDatabase {
 
   public syncPaperSearchIndex(paperId: string): void {
     const paper = this.db
-      .prepare('SELECT id, title, authors, affiliations FROM papers WHERE id = ?')
-      .get(paperId) as { id: string; title: string; authors: string; affiliations: string } | undefined;
+      .prepare('SELECT id, sha256, file_type, title, authors, affiliations FROM papers WHERE id = ?')
+      .get(paperId) as
+      | {
+          id: string;
+          sha256: string;
+          file_type?: PaperFileType;
+          title: string;
+          authors: string;
+          affiliations: string;
+        }
+      | undefined;
 
     this.db.prepare('DELETE FROM search_fts WHERE paper_id = ?').run(paperId);
     if (!paper) return;
@@ -360,6 +426,20 @@ export class FoxReaderDatabase {
       .prepare('SELECT content_md FROM paper_notes WHERE paper_id = ?')
       .get(paperId) as { content_md: string } | undefined;
 
+    let docText = '';
+    if (paper.file_type === 'md') {
+      const mdPath = path.join(this.dataDir, 'docs', `${paper.sha256}.md`);
+      if (fs.existsSync(mdPath)) {
+        try {
+          docText = fs.readFileSync(mdPath, 'utf-8').slice(0, 200_000);
+        } catch {
+          // Ignore unreadable markdown during FTS sync
+        }
+      }
+    }
+
+    const combinedContent = [noteRow?.content_md ?? '', docText].filter(Boolean).join('\n');
+
     this.db
       .prepare(
         `INSERT INTO search_fts (paper_id, title, authors, affiliations, tags, quote_text, comment, content_md)
@@ -373,7 +453,7 @@ export class FoxReaderDatabase {
         tagsText,
         quoteText,
         commentText,
-        noteRow?.content_md ?? '',
+        combinedContent,
       );
   }
 
@@ -588,9 +668,11 @@ export class FoxReaderDatabase {
       if (!stat.isFile()) {
         return { sourcePath, status: 'error', error: 'Selected path is not a file.' };
       }
-      if (path.extname(sourcePath).toLowerCase() !== '.pdf') {
-        return { sourcePath, status: 'error', error: 'Only .pdf files can be imported.' };
+      const ext = path.extname(sourcePath).toLowerCase();
+      if (ext !== '.pdf' && ext !== '.md' && ext !== '.markdown') {
+        return { sourcePath, status: 'error', error: 'Only .pdf or .md files can be imported.' };
       }
+      const fileType: PaperFileType = ext === '.pdf' ? 'pdf' : 'md';
 
       const sha256 = await computeFileSha256(sourcePath);
       const existing = this.getPaperBySha256(sha256);
@@ -604,27 +686,59 @@ export class FoxReaderDatabase {
         validFolderId = folderExists ? folderId : null;
       }
 
-      const pdfsDir = path.join(dataDir, 'pdfs');
-      await fs.promises.mkdir(pdfsDir, { recursive: true });
-      const destPath = path.join(pdfsDir, `${sha256}.pdf`);
-      if (!fs.existsSync(destPath)) {
-        await fs.promises.copyFile(sourcePath, destPath);
-      }
-
       const id = crypto.randomUUID();
       const fileName = path.basename(sourcePath);
       const fallbackTitle = path.basename(sourcePath, path.extname(sourcePath)) || fileName;
       const now = Date.now();
+
+      let initialTitle = fallbackTitle;
+      let initialAuthors = '';
+      let initialAffiliations = '';
+      let initialYear: number | null = null;
+
+      if (fileType === 'pdf') {
+        const pdfsDir = path.join(dataDir, 'pdfs');
+        await fs.promises.mkdir(pdfsDir, { recursive: true });
+        const destPath = path.join(pdfsDir, `${sha256}.pdf`);
+        if (!fs.existsSync(destPath)) {
+          await fs.promises.copyFile(sourcePath, destPath);
+        }
+      } else {
+        const docsDir = path.join(dataDir, 'docs');
+        await fs.promises.mkdir(docsDir, { recursive: true });
+        const destPath = path.join(docsDir, `${sha256}.md`);
+        if (!fs.existsSync(destPath)) {
+          await fs.promises.copyFile(sourcePath, destPath);
+        }
+        const mdRaw = await fs.promises.readFile(destPath, 'utf-8');
+        const parsed = parseMarkdownHeader(mdRaw, fallbackTitle);
+        initialTitle = parsed.title;
+        initialAuthors = parsed.authors;
+        initialAffiliations = parsed.affiliations;
+        initialYear = parsed.year;
+      }
 
       this.runInTransaction(() => {
         this.db
           .prepare(
             `INSERT INTO papers (
               id, sha256, title, authors, affiliations, year, folder_id, status,
-              page_count, last_page, last_zoom, file_name, created_at, updated_at
-            ) VALUES (?, ?, ?, '', '', NULL, ?, 'unread', 0, 1, 1.0, ?, ?, ?)`,
+              page_count, last_page, last_zoom, file_name, file_type, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, 'unread', 0, 1, 1.0, ?, ?, ?, ?)`,
           )
-          .run(id, sha256, fallbackTitle, validFolderId, fileName, now, now);
+          .run(
+            id,
+            sha256,
+            initialTitle,
+            initialAuthors,
+            initialAffiliations,
+            initialYear,
+            validFolderId,
+            fileName,
+            fileType,
+            now,
+            now,
+          );
         this.syncPaperSearchIndex(id);
       });
 
@@ -706,10 +820,18 @@ export class FoxReaderDatabase {
       .run(safePage, safeZoom, paperId);
   }
 
+  public async readMarkdownContent(sha256: string, dataDir: string): Promise<string> {
+    if (!/^[a-f0-9]{64}$/i.test(sha256)) {
+      throw new Error('Invalid document identifier.');
+    }
+    const mdPath = path.join(dataDir, 'docs', `${sha256}.md`);
+    return fs.promises.readFile(mdPath, 'utf-8');
+  }
+
   public async deletePaper(paperId: string, dataDir: string): Promise<void> {
     const paper = this.db
-      .prepare('SELECT id, sha256 FROM papers WHERE id = ?')
-      .get(paperId) as { id: string; sha256: string } | undefined;
+      .prepare('SELECT id, sha256, file_type FROM papers WHERE id = ?')
+      .get(paperId) as { id: string; sha256: string; file_type?: PaperFileType } | undefined;
     if (!paper) return;
 
     const snapshots = this.db
@@ -721,8 +843,11 @@ export class FoxReaderDatabase {
       this.db.prepare('DELETE FROM papers WHERE id = ?').run(paperId);
     });
 
-    const pdfPath = path.join(dataDir, 'pdfs', `${paper.sha256}.pdf`);
-    await fs.promises.rm(pdfPath, { force: true });
+    const docPath =
+      paper.file_type === 'md'
+        ? path.join(dataDir, 'docs', `${paper.sha256}.md`)
+        : path.join(dataDir, 'pdfs', `${paper.sha256}.pdf`);
+    await fs.promises.rm(docPath, { force: true });
 
     for (const snap of snapshots) {
       const snapFullPath = path.isAbsolute(snap.snapshot_path)

@@ -252,8 +252,12 @@ function registerIpcHandlers(): void {
 
   ipcMain.handle('papers:pickAndImport', async (_event, folderId: string | null) => {
     const dialogOpts = {
-      title: '导入 PDF 论文',
-      filters: [{ name: 'PDF 文件', extensions: ['pdf'] }],
+      title: '导入文档',
+      filters: [
+        { name: '支持的文档 (PDF / Markdown)', extensions: ['pdf', 'md', 'markdown'] },
+        { name: 'PDF 文件', extensions: ['pdf'] },
+        { name: 'Markdown 文件', extensions: ['md', 'markdown'] },
+      ],
       properties: ['openFile', 'multiSelections'] as ('openFile' | 'multiSelections')[],
     };
     const result = mainWindow
@@ -269,6 +273,10 @@ function registerIpcHandlers(): void {
     }
     return items;
   });
+
+  ipcMain.handle('papers:readMarkdown', (_event, sha256: string) =>
+    database.readMarkdownContent(sha256, settingsManager.getDataDir()),
+  );
 
   ipcMain.handle('papers:updateMetadata', (_event, paperId: string, input: UpdatePaperMetadataInput) =>
     database.updatePaperMetadata(paperId, input),

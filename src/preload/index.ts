@@ -29,6 +29,7 @@ const api: FoxReaderApi = {
   enrichPaperOnline: (input: EnrichPaperOnlineInput) =>
     ipcRenderer.invoke('papers:enrichOnline', input),
   translateText: (text: string) => ipcRenderer.invoke('translate:text', text),
+  readMarkdownContent: (sha256: string) => ipcRenderer.invoke('papers:readMarkdown', sha256),
   movePaperToFolder: (paperId: string, folderId: string | null) =>
     ipcRenderer.invoke('papers:moveToFolder', paperId, folderId),
   updatePaperProgress: (paperId: string, lastPage: number, lastZoom: number) =>

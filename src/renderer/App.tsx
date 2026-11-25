@@ -17,6 +17,7 @@ import type {
 } from '../shared/types';
 import { extractPdfMetadata } from './lib/pdf';
 import { LeftSidebar } from './components/LeftSidebar';
+import { MarkdownReader } from './components/MarkdownReader';
 import { PdfReader } from './components/PdfReader';
 import { RightSidebar } from './components/RightSidebar';
 import {
@@ -145,6 +146,12 @@ export function App() {
     [papers, selectedPaperId],
   );
 
+  useEffect(() => {
+    if (selectedPaper?.fileType === 'md') {
+      setRightTab('notes');
+    }
+  }, [selectedPaper?.id, selectedPaper?.fileType]);
+
   // Load annotations & Markdown note whenever selectedPaperId changes
   useEffect(() => {
     setSelectedAnnotationId(null);
@@ -183,19 +190,21 @@ export function App() {
         if (item.status === 'imported' && item.paper) {
           importedCount += 1;
           if (!firstImportedPaper) firstImportedPaper = item.paper;
-          const targetId = item.paper.id;
-          const targetSha = item.paper.sha256;
-          void extractPdfMetadata(targetSha).then(async (meta) => {
-            if (!meta) return;
-            await window.foxreader.updatePaperMetadata(targetId, {
-              pageCount: meta.pageCount,
-              ...(meta.title ? { title: meta.title } : {}),
-              ...(meta.authors ? { authors: meta.authors } : {}),
-              ...(meta.affiliations ? { affiliations: meta.affiliations } : {}),
-              ...(meta.year ? { year: meta.year } : {}),
+          if (item.paper.fileType === 'pdf') {
+            const targetId = item.paper.id;
+            const targetSha = item.paper.sha256;
+            void extractPdfMetadata(targetSha).then(async (meta) => {
+              if (!meta) return;
+              await window.foxreader.updatePaperMetadata(targetId, {
+                pageCount: meta.pageCount,
+                ...(meta.title ? { title: meta.title } : {}),
+                ...(meta.authors ? { authors: meta.authors } : {}),
+                ...(meta.affiliations ? { affiliations: meta.affiliations } : {}),
+                ...(meta.year ? { year: meta.year } : {}),
+              });
+              await refreshPapers();
             });
-            await refreshPapers();
-          });
+          }
         } else if (item.status === 'duplicate' && item.paper) {
           duplicatePaper = item.paper;
         } else if (item.status === 'error') {
@@ -219,15 +228,15 @@ export function App() {
       }
 
       if (importedCount > 0) {
-        pushToast('success', `成功导入 ${importedCount} 篇 PDF 论文`);
+        pushToast('success', `成功导入 ${importedCount} 篇文档`);
       }
       if (duplicatePaper && importedCount === 0) {
-        pushToast('info', `检测到重复论文（SHA-256 相同），已定位打开：${duplicatePaper.title}`);
+        pushToast('info', `检测到重复文档（SHA-256 相同），已定位打开：${duplicatePaper.title}`);
       } else if (duplicatePaper) {
-        pushToast('info', `部分文件已存在于论文库中（SHA-256 去重跳过）`);
+        pushToast('info', `部分文件已存在于文档库中（SHA-256 去重跳过）`);
       }
       if (errorCount > 0) {
-        pushToast('warning', `${errorCount} 个文件未导入（仅支持有效的 .pdf 文件）`);
+        pushToast('warning', `${errorCount} 个文件未导入（仅支持有效的 .pdf / .md 文件）`);
       }
     },
     [pushToast, refreshAll, refreshPapers],
@@ -243,15 +252,18 @@ export function App() {
 
   const handleImportFiles = useCallback(
     async (files: File[], folderId: string | null) => {
-      const pdfPaths = files
-        .filter((f) => f.name.toLowerCase().endsWith('.pdf'))
+      const docPaths = files
+        .filter((f) => {
+          const lower = f.name.toLowerCase();
+          return lower.endsWith('.pdf') || lower.endsWith('.md') || lower.endsWith('.markdown');
+        })
         .map((f) => window.foxreader.getPathForFile(f))
         .filter((p) => p.length > 0);
-      if (pdfPaths.length === 0) {
-        pushToast('warning', '请拖入 .pdf 格式的论文文件');
+      if (docPaths.length === 0) {
+        pushToast('warning', '请拖入 .pdf 或 .md 格式的文档文件');
         return;
       }
-      const results = await window.foxreader.importPaths(pdfPaths, folderId);
+      const results = await window.foxreader.importPaths(docPaths, folderId);
       await handleImportResults(results);
     },
     [handleImportResults, pushToast],
@@ -627,26 +639,37 @@ export function App() {
         />
       )}
 
-      <PdfReader
-        paper={selectedPaper}
-        annotations={annotations}
-        activeColor={activeColor}
-        selectedAnnotationId={selectedAnnotationId}
-        jumpRequest={jumpRequest}
-        leftCollapsed={leftCollapsed}
-        rightCollapsed={rightCollapsed}
-        onToggleLeft={() => setLeftCollapsed((p) => !p)}
-        onToggleRight={() => setRightCollapsed((p) => !p)}
-        onSaveProgress={handleSaveProgress}
-        onSyncPageCount={handleSyncPageCount}
-        onPickAndImport={() => void handlePickAndImport(activeView === 'folder' ? activeFolderId : null)}
-        onCreateTextAnnotation={handleCreateTextAnnotation}
-        onCreateAreaAnnotation={handleCreateAreaAnnotation}
-        onUpdateAnnotationColor={handleUpdateAnnotationColor}
-        onDeleteAnnotation={handleDeleteAnnotation}
-        onSelectAnnotationFromPdf={handleSelectAnnotationFromPdf}
-        onCopyText={handleCopyText}
-      />
+      {selectedPaper?.fileType === 'md' ? (
+        <MarkdownReader
+          paper={selectedPaper}
+          leftCollapsed={leftCollapsed}
+          rightCollapsed={rightCollapsed}
+          onToggleLeft={() => setLeftCollapsed((p) => !p)}
+          onToggleRight={() => setRightCollapsed((p) => !p)}
+          onCopyText={handleCopyText}
+        />
+      ) : (
+        <PdfReader
+          paper={selectedPaper}
+          annotations={annotations}
+          activeColor={activeColor}
+          selectedAnnotationId={selectedAnnotationId}
+          jumpRequest={jumpRequest}
+          leftCollapsed={leftCollapsed}
+          rightCollapsed={rightCollapsed}
+          onToggleLeft={() => setLeftCollapsed((p) => !p)}
+          onToggleRight={() => setRightCollapsed((p) => !p)}
+          onSaveProgress={handleSaveProgress}
+          onSyncPageCount={handleSyncPageCount}
+          onPickAndImport={() => void handlePickAndImport(activeView === 'folder' ? activeFolderId : null)}
+          onCreateTextAnnotation={handleCreateTextAnnotation}
+          onCreateAreaAnnotation={handleCreateAreaAnnotation}
+          onUpdateAnnotationColor={handleUpdateAnnotationColor}
+          onDeleteAnnotation={handleDeleteAnnotation}
+          onSelectAnnotationFromPdf={handleSelectAnnotationFromPdf}
+          onCopyText={handleCopyText}
+        />
+      )}
 
       {!rightCollapsed && (
         <RightSidebar
@@ -674,7 +697,7 @@ export function App() {
       {windowFileDragOver && (
         <div className="pointer-events-none fixed inset-0 z-40 bg-violet-500/10 border-4 border-dashed border-violet-500 flex items-center justify-center">
           <div className="rounded-xl bg-white px-6 py-4 shadow-xl border border-violet-200 text-sm font-semibold text-violet-900">
-            松开鼠标即可导入 PDF 论文
+            松开鼠标即可导入 PDF / Markdown 文档
           </div>
         </div>
       )}

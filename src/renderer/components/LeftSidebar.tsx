@@ -724,6 +724,11 @@ export function LeftSidebar({
                     {paper.year ? ` · ${paper.year}` : ''}
                   </span>
                   <div className="flex items-center gap-1.5 shrink-0">
+                    {paper.fileType === 'md' && (
+                      <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                        MD
+                      </span>
+                    )}
                     {paper.pageCount > 0 && (
                       <span className="text-[10px] text-slate-400 tabular-nums">{paper.pageCount}p</span>
                     )}

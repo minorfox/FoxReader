@@ -1,5 +1,7 @@
 export type PaperStatus = 'unread' | 'reading' | 'read';
 
+export type PaperFileType = 'pdf' | 'md';
+
 export type LibraryView = 'all' | 'unclassified' | 'folder';
 
 export type AnnotationColor = 'yellow' | 'green' | 'blue' | 'pink' | 'purple';
@@ -87,6 +89,7 @@ export interface Paper {
   lastPage: number;
   lastZoom: number;
   fileName: string;
+  fileType: PaperFileType;
   createdAt: number;
   updatedAt: number;
   tags: Tag[];
@@ -251,6 +254,7 @@ export interface FoxReaderApi {
   updatePaperMetadata: (paperId: string, input: UpdatePaperMetadataInput) => Promise<Paper>;
   enrichPaperOnline: (input: EnrichPaperOnlineInput) => Promise<EnrichPaperOnlineResult>;
   translateText: (text: string) => Promise<TranslateTextResult>;
+  readMarkdownContent: (sha256: string) => Promise<string>;
   movePaperToFolder: (paperId: string, folderId: string | null) => Promise<Paper>;
   updatePaperProgress: (paperId: string, lastPage: number, lastZoom: number) => Promise<void>;
   deletePaper: (paperId: string) => Promise<void>;
