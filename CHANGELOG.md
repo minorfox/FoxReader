@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Automatic reading status progression (`未读` -> `在读` on open, `在读` -> `已读` when reaching the final PDF page) plus 1-click status cycling on left sidebar cards and reader top toolbars.
+
+### Performance
+
+- Added HTTP byte-range (`206 Partial Content`) streaming for `foxpdf://paper/` and in-memory `foxpdf://assets/` caching in the main process.
+- Switched renderer `pdfjs-dist` to the modern native build (`pdfjs-dist/build/pdf.mjs`), removed eager full-document page scanning on load, tightened lazy render window to `currentPage ± 1` with `page.cleanup()`, capped Retina canvas DPR scaling (`<= 2x` / `<= 1.5x` above 150% zoom), and serialized background metadata extraction after initial page render.
+
 ## [0.2.1] - 2026-11-25
 
 ### Added

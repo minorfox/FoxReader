@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type {
   Annotation,
   AnnotationColor,
@@ -152,6 +152,24 @@ export function App() {
     }
   }, [selectedPaper?.id, selectedPaper?.fileType]);
 
+  const handleChangePaperStatus = useCallback(
+    async (paperId: string, status: PaperStatus) => {
+      const updated = await window.foxreader.updatePaperMetadata(paperId, { status });
+      setPapers((prev) => prev.map((p) => (p.id === paperId ? updated : p)));
+      if (statusFilter !== 'all') {
+        await refreshPapers();
+      }
+    },
+    [refreshPapers, statusFilter],
+  );
+
+  // Automatically promote 'unread' -> 'reading' when opening a document
+  useEffect(() => {
+    if (selectedPaper && selectedPaper.status === 'unread') {
+      void handleChangePaperStatus(selectedPaper.id, 'reading');
+    }
+  }, [selectedPaper?.id, selectedPaper?.status, handleChangePaperStatus]);
+
   // Load annotations & Markdown note whenever selectedPaperId changes
   useEffect(() => {
     setSelectedAnnotationId(null);
@@ -177,6 +195,38 @@ export function App() {
     };
   }, [selectedPaperId]);
 
+  const metadataQueueRef = useRef<Array<{ id: string; sha256: string }>>([]);
+  const metadataWorkerRunningRef = useRef(false);
+
+  const drainMetadataQueue = useCallback(() => {
+    if (metadataWorkerRunningRef.current) return;
+    metadataWorkerRunningRef.current = true;
+    // Brief delay lets the newly opened document render Page 1 before background metadata parsing runs
+    setTimeout(async () => {
+      try {
+        while (metadataQueueRef.current.length > 0) {
+          const next = metadataQueueRef.current.shift();
+          if (!next) continue;
+          const meta = await extractPdfMetadata(next.sha256);
+          if (!meta) continue;
+          await window.foxreader.updatePaperMetadata(next.id, {
+            pageCount: meta.pageCount,
+            ...(meta.title ? { title: meta.title } : {}),
+            ...(meta.authors ? { authors: meta.authors } : {}),
+            ...(meta.affiliations ? { affiliations: meta.affiliations } : {}),
+            ...(meta.year ? { year: meta.year } : {}),
+          });
+          await refreshPapers();
+        }
+      } finally {
+        metadataWorkerRunningRef.current = false;
+        if (metadataQueueRef.current.length > 0) {
+          drainMetadataQueue();
+        }
+      }
+    }, 350);
+  }, [refreshPapers]);
+
   const handleImportResults = useCallback(
     async (results: ImportPdfItemResult[]) => {
       if (results.length === 0) return;
@@ -191,25 +241,17 @@ export function App() {
           importedCount += 1;
           if (!firstImportedPaper) firstImportedPaper = item.paper;
           if (item.paper.fileType === 'pdf') {
-            const targetId = item.paper.id;
-            const targetSha = item.paper.sha256;
-            void extractPdfMetadata(targetSha).then(async (meta) => {
-              if (!meta) return;
-              await window.foxreader.updatePaperMetadata(targetId, {
-                pageCount: meta.pageCount,
-                ...(meta.title ? { title: meta.title } : {}),
-                ...(meta.authors ? { authors: meta.authors } : {}),
-                ...(meta.affiliations ? { affiliations: meta.affiliations } : {}),
-                ...(meta.year ? { year: meta.year } : {}),
-              });
-              await refreshPapers();
-            });
+            metadataQueueRef.current.push({ id: item.paper.id, sha256: item.paper.sha256 });
           }
         } else if (item.status === 'duplicate' && item.paper) {
           duplicatePaper = item.paper;
         } else if (item.status === 'error') {
           errorCount += 1;
         }
+      }
+
+      if (metadataQueueRef.current.length > 0) {
+        drainMetadataQueue();
       }
 
       await refreshAll();
@@ -635,6 +677,7 @@ export function App() {
           onRequestBatchDeletePapers={(items, onDone) =>
             setConfirmBatchDelete({ papers: items, onDone })
           }
+          onChangePaperStatus={handleChangePaperStatus}
           onOpenSettings={() => setSettingsOpen(true)}
         />
       )}
@@ -647,6 +690,7 @@ export function App() {
           onToggleLeft={() => setLeftCollapsed((p) => !p)}
           onToggleRight={() => setRightCollapsed((p) => !p)}
           onCopyText={handleCopyText}
+          onChangePaperStatus={handleChangePaperStatus}
         />
       ) : (
         <PdfReader
@@ -668,6 +712,7 @@ export function App() {
           onDeleteAnnotation={handleDeleteAnnotation}
           onSelectAnnotationFromPdf={handleSelectAnnotationFromPdf}
           onCopyText={handleCopyText}
+          onChangePaperStatus={handleChangePaperStatus}
         />
       )}
 

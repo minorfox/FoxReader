@@ -1,4 +1,4 @@
-import * as pdfjsLib from 'pdfjs-dist/legacy/build/pdf.mjs';
+import * as pdfjsLib from 'pdfjs-dist';
 import {
   parsePdfHeaderFromPage1,
   type PdfInfoMetadata,
@@ -6,7 +6,7 @@ import {
 } from './pdfMetadata';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
-  'pdfjs-dist/legacy/build/pdf.worker.min.mjs',
+  'pdfjs-dist/build/pdf.worker.min.mjs',
   import.meta.url,
 ).toString();
 
@@ -28,6 +28,7 @@ export function getPdfDocumentOptions(sha256: string) {
     standardFontDataUrl: 'foxpdf://assets/standard_fonts/',
     wasmUrl: 'foxpdf://assets/wasm/',
     iccUrl: 'foxpdf://assets/iccs/',
+    rangeChunkSize: 65536,
     verbosity: pdfjsLib.VerbosityLevel.ERRORS,
   };
 }

@@ -31,8 +31,27 @@ import {
   type AnnotationColor,
   type NormalizedRect,
   type Paper,
+  type PaperStatus,
   type TranslateTextResult,
 } from '../../shared/types';
+
+const STATUS_LABEL: Record<PaperStatus, string> = {
+  unread: '未读',
+  reading: '在读',
+  read: '已读',
+};
+
+const STATUS_STYLE: Record<PaperStatus, string> = {
+  unread: 'border-slate-200 bg-slate-50 text-slate-600 hover:bg-slate-100',
+  reading: 'border-violet-200 bg-violet-50 text-violet-700 hover:bg-violet-100',
+  read: 'border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100',
+};
+
+const NEXT_STATUS: Record<PaperStatus, PaperStatus> = {
+  unread: 'reading',
+  reading: 'read',
+  read: 'unread',
+};
 import { getPdfDocumentOptions, pdfjsLib } from '../lib/pdf';
 import { extractSelectionForPage } from '../lib/selection';
 import { PdfPageCanvas } from './PdfPageCanvas';
@@ -102,6 +121,7 @@ interface PdfReaderProps {
   onDeleteAnnotation: (id: string) => Promise<void>;
   onSelectAnnotationFromPdf: (annotation: Annotation) => void;
   onCopyText: (text: string) => void;
+  onChangePaperStatus: (paperId: string, status: PaperStatus) => Promise<void>;
 }
 
 export function PdfReader({
@@ -123,6 +143,7 @@ export function PdfReader({
   onDeleteAnnotation,
   onSelectAnnotationFromPdf,
   onCopyText,
+  onChangePaperStatus,
 }: PdfReaderProps) {
   const scrollContainerRef = useRef<HTMLDivElement | null>(null);
   const pageElementsRef = useRef<Map<number, HTMLDivElement>>(new Map());
@@ -157,6 +178,21 @@ export function PdfReader({
 
   const visibleRatiosRef = useRef<Map<number, number>>(new Map());
   const pendingInitialJumpRef = useRef<number | null>(null);
+  const autoMarkedReadPaperIdRef = useRef<string | null>(null);
+
+  const handlePageSizeMeasured = useCallback((pageNumber: number, width: number, height: number) => {
+    setPageSizes((prev) => {
+      const idx = pageNumber - 1;
+      const existing = prev[idx];
+      if (!existing) return prev;
+      if (Math.abs(existing.width - width) <= 1 && Math.abs(existing.height - height) <= 1) {
+        return prev;
+      }
+      const next = [...prev];
+      next[idx] = { width, height };
+      return next;
+    });
+  }, []);
 
   const annotationsByPage = useMemo(() => {
     const map = new Map<number, Annotation[]>();
@@ -223,6 +259,7 @@ export function PdfReader({
   // Load PDF document when selected paper changes
   useEffect(() => {
     translateReqIdRef.current += 1;
+    autoMarkedReadPaperIdRef.current = null;
     setSelectionBar(null);
     setTranslationCard(null);
     setPopover(null);
@@ -277,7 +314,8 @@ export function PdfReader({
           onSyncPageCount(paperId, numPages);
         }
 
-        // Prime all page placeholders using page 1 dimensions immediately
+        // Prime all page placeholders from page 1 dimensions immediately;
+        // mixed-orientation pages self-correct lazily when rendered.
         const firstPage = await doc.getPage(1);
         if (cancelled) return;
         const firstVp = firstPage.getViewport({ scale: 1.0 });
@@ -289,20 +327,6 @@ export function PdfReader({
         setPageSizes(initialSizes);
         setPdfDoc(doc);
         setLoading(false);
-
-        // Measure remaining pages lazily in small batches so mixed page orientations stay exact
-        if (numPages > 1) {
-          const updatedSizes = [...initialSizes];
-          for (let p = 2; p <= numPages; p++) {
-            if (cancelled) return;
-            const pg = await doc.getPage(p);
-            const vp = pg.getViewport({ scale: 1.0 });
-            updatedSizes[p - 1] = { width: vp.width, height: vp.height };
-            if (p % 10 === 0 || p === numPages) {
-              if (!cancelled) setPageSizes([...updatedSizes]);
-            }
-          }
-        }
       } catch (err) {
         if (!cancelled) {
           setLoading(false);
@@ -440,6 +464,23 @@ export function PdfReader({
     }, 500);
     return () => clearTimeout(timer);
   }, [paper?.id, pdfDoc, currentPage, effectiveZoom, onSaveProgress]);
+
+  // Automatically promote status to 'read' once user reaches the final page
+  useEffect(() => {
+    const numPages = pdfDoc?.numPages ?? 0;
+    if (
+      !paper ||
+      !pdfDoc ||
+      numPages < 2 ||
+      currentPage < numPages ||
+      paper.status === 'read' ||
+      autoMarkedReadPaperIdRef.current === paper.id
+    ) {
+      return;
+    }
+    autoMarkedReadPaperIdRef.current = paper.id;
+    void onChangePaperStatus(paper.id, 'read');
+  }, [paper?.id, paper?.status, pdfDoc, currentPage, onChangePaperStatus]);
 
   const adjustZoom = (delta: number) => {
     setFitWidth(false);
@@ -741,10 +782,19 @@ export function PdfReader({
           </div>
         )}
 
-        {/* Right Controls: Annotation Mode + Search + Right Sidebar Toggle */}
+        {/* Right Controls: Status + Annotation Mode + Search + Right Sidebar Toggle */}
         <div className="flex items-center gap-2 shrink-0">
           {paper && (
             <>
+              <button
+                type="button"
+                title="点击切换阅读状态（到达末页自动标为已读）"
+                onClick={() => void onChangePaperStatus(paper.id, NEXT_STATUS[paper.status])}
+                className={`px-2 py-1 rounded-md border text-[11px] font-medium transition ${STATUS_STYLE[paper.status]}`}
+              >
+                {STATUS_LABEL[paper.status]}
+              </button>
+
               <div className="hidden md:flex items-center rounded-lg border border-slate-200 bg-slate-50 p-0.5">
                 <button
                   type="button"
@@ -870,7 +920,7 @@ export function PdfReader({
           <div className="flex flex-col items-center gap-4 pb-12">
             {pageSizes.map((size, idx) => {
               const pageNum = idx + 1;
-              const shouldRender = Math.abs(pageNum - currentPage) <= 2;
+              const shouldRender = Math.abs(pageNum - currentPage) <= 1;
               return (
                 <PdfPageCanvas
                   key={`${paper.id}-${pageNum}`}
@@ -891,6 +941,7 @@ export function PdfReader({
                       : -1
                   }
                   registerElement={registerElement}
+                  onPageSizeMeasured={handlePageSizeMeasured}
                   onTextSelection={handleTextSelection}
                   onCreateAreaAnnotation={onCreateAreaAnnotation}
                   onClickAnnotation={handleClickAnnotation}

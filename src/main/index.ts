@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { dirname } from 'node:path';
+import { Readable } from 'node:stream';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { app, BrowserWindow, dialog, ipcMain, net, protocol, shell } from 'electron';
 import { DataDirLock } from './dataLock.js';
@@ -89,12 +90,39 @@ function getPdfjsDistRoot(): string {
 }
 
 const ALLOWED_PDFJS_BUCKETS = new Set(['cmaps', 'standard_fonts', 'wasm', 'iccs']);
+const pdfAssetCache = new Map<string, Uint8Array>();
 
 function getAssetContentType(fileName: string): string {
   const ext = path.extname(fileName).toLowerCase();
   if (ext === '.wasm') return 'application/wasm';
   if (ext === '.js' || ext === '.mjs') return 'text/javascript; charset=utf-8';
   return 'application/octet-stream';
+}
+
+function parseByteRange(rangeHeader: string, fileSize: number): { start: number; end: number } | 'unsatisfiable' | null {
+  const match = /^bytes=(\d*)-(\d*)$/i.exec(rangeHeader.trim());
+  if (!match) return null;
+  const [, startStr, endStr] = match;
+  if (!startStr && !endStr) return null;
+
+  let start: number;
+  let end: number;
+  if (!startStr) {
+    const suffixLen = Number.parseInt(endStr, 10);
+    if (!Number.isFinite(suffixLen) || suffixLen <= 0) return 'unsatisfiable';
+    start = Math.max(0, fileSize - suffixLen);
+    end = fileSize - 1;
+  } else {
+    start = Number.parseInt(startStr, 10);
+    end = endStr ? Number.parseInt(endStr, 10) : fileSize - 1;
+    if (!Number.isFinite(start) || !Number.isFinite(end)) return 'unsatisfiable';
+    end = Math.min(end, fileSize - 1);
+  }
+
+  if (start < 0 || start >= fileSize || start > end) {
+    return 'unsatisfiable';
+  }
+  return { start, end };
 }
 
 function registerFoxPdfProtocol(): void {
@@ -112,10 +140,63 @@ function registerFoxPdfProtocol(): void {
         if (!targetPath.startsWith(pdfsRoot + path.sep)) {
           return new Response('Forbidden', { status: 403 });
         }
-        if (!fs.existsSync(targetPath)) {
+        let stat: fs.Stats;
+        try {
+          stat = await fs.promises.stat(targetPath);
+        } catch {
           return new Response('PDF not found', { status: 404 });
         }
-        return net.fetch(pathToFileURL(targetPath).toString());
+        const fileSize = stat.size;
+        if (fileSize === 0) {
+          return new Response(new Uint8Array(0), {
+            status: 200,
+            headers: {
+              'Content-Type': 'application/pdf',
+              'Accept-Ranges': 'bytes',
+              'Content-Length': '0',
+            },
+          });
+        }
+
+        const rangeHeader = request.headers.get('range');
+        if (rangeHeader) {
+          const byteRange = parseByteRange(rangeHeader, fileSize);
+          if (byteRange === 'unsatisfiable') {
+            return new Response(null, {
+              status: 416,
+              headers: { 'Content-Range': `bytes */${fileSize}` },
+            });
+          }
+          if (byteRange) {
+            const { start, end } = byteRange;
+            const stream = fs.createReadStream(targetPath, { start, end });
+            return new Response(
+              Readable.toWeb(stream) as unknown as NonNullable<ConstructorParameters<typeof Response>[0]>,
+              {
+                status: 206,
+                headers: {
+                  'Content-Type': 'application/pdf',
+                  'Accept-Ranges': 'bytes',
+                  'Content-Range': `bytes ${start}-${end}/${fileSize}`,
+                  'Content-Length': String(end - start + 1),
+                },
+              },
+            );
+          }
+        }
+
+        const stream = fs.createReadStream(targetPath);
+        return new Response(
+          Readable.toWeb(stream) as unknown as NonNullable<ConstructorParameters<typeof Response>[0]>,
+          {
+            status: 200,
+            headers: {
+              'Content-Type': 'application/pdf',
+              'Accept-Ranges': 'bytes',
+              'Content-Length': String(fileSize),
+            },
+          },
+        );
       }
 
       if (parsed.hostname === 'snapshot') {
@@ -142,18 +223,26 @@ function registerFoxPdfProtocol(): void {
         if (!ALLOWED_PDFJS_BUCKETS.has(bucket) || !/^[a-zA-Z0-9._-]+$/.test(assetFile)) {
           return new Response('Invalid asset path', { status: 400 });
         }
-        const bucketRoot = path.resolve(getPdfjsDistRoot(), bucket);
-        const targetPath = path.resolve(bucketRoot, assetFile);
-        if (!targetPath.startsWith(bucketRoot + path.sep)) {
-          return new Response('Forbidden', { status: 403 });
+        const cacheKey = `${bucket}/${assetFile}`;
+        let bytes = pdfAssetCache.get(cacheKey);
+        if (!bytes) {
+          const bucketRoot = path.resolve(getPdfjsDistRoot(), bucket);
+          const targetPath = path.resolve(bucketRoot, assetFile);
+          if (!targetPath.startsWith(bucketRoot + path.sep)) {
+            return new Response('Forbidden', { status: 403 });
+          }
+          if (!fs.existsSync(targetPath)) {
+            return new Response('Asset not found', { status: 404 });
+          }
+          bytes = new Uint8Array(await fs.promises.readFile(targetPath));
+          pdfAssetCache.set(cacheKey, bytes);
         }
-        if (!fs.existsSync(targetPath)) {
-          return new Response('Asset not found', { status: 404 });
-        }
-        const data = await fs.promises.readFile(targetPath);
-        return new Response(new Uint8Array(data), {
+        return new Response(new Uint8Array(bytes), {
           status: 200,
-          headers: { 'Content-Type': getAssetContentType(assetFile) },
+          headers: {
+            'Content-Type': getAssetContentType(assetFile),
+            'Cache-Control': 'public, max-age=31536000, immutable',
+          },
         });
       }
 

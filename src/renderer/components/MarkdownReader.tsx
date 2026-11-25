@@ -20,7 +20,25 @@ import {
   ZoomIn,
   ZoomOut,
 } from 'lucide-react';
-import type { Paper, TranslateTextResult } from '../../shared/types';
+import type { Paper, PaperStatus, TranslateTextResult } from '../../shared/types';
+
+const STATUS_LABEL: Record<PaperStatus, string> = {
+  unread: '未读',
+  reading: '在读',
+  read: '已读',
+};
+
+const STATUS_STYLE: Record<PaperStatus, string> = {
+  unread: 'border-slate-200 bg-slate-50 text-slate-600 hover:bg-slate-100',
+  reading: 'border-violet-200 bg-violet-50 text-violet-700 hover:bg-violet-100',
+  read: 'border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100',
+};
+
+const NEXT_STATUS: Record<PaperStatus, PaperStatus> = {
+  unread: 'reading',
+  reading: 'read',
+  read: 'unread',
+};
 
 interface MarkdownSelectionPrompt {
   quoteText: string;
@@ -40,6 +58,7 @@ interface MarkdownReaderProps {
   onToggleLeft: () => void;
   onToggleRight: () => void;
   onCopyText: (text: string) => void;
+  onChangePaperStatus: (paperId: string, status: PaperStatus) => Promise<void>;
 }
 
 function stripYamlFrontmatter(raw: string): string {
@@ -116,6 +135,7 @@ export function MarkdownReader({
   onToggleLeft,
   onToggleRight,
   onCopyText,
+  onChangePaperStatus,
 }: MarkdownReaderProps) {
   const articleRef = useRef<HTMLDivElement | null>(null);
   const findInputRef = useRef<HTMLInputElement | null>(null);
@@ -352,8 +372,17 @@ export function MarkdownReader({
           </div>
         </div>
 
-        {/* Font Zoom & Find */}
+        {/* Status + Font Zoom & Find */}
         <div className="flex items-center gap-2 shrink-0">
+          <button
+            type="button"
+            title="点击切换阅读状态"
+            onClick={() => void onChangePaperStatus(paper.id, NEXT_STATUS[paper.status])}
+            className={`px-2 py-1 rounded-md border text-[11px] font-medium transition ${STATUS_STYLE[paper.status]}`}
+          >
+            {STATUS_LABEL[paper.status]}
+          </button>
+
           <div className="flex items-center gap-1 rounded-lg border border-slate-200 bg-slate-50 px-1.5 py-0.5">
             <button
               type="button"

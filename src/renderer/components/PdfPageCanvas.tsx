@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import type { PDFDocumentProxy, RenderTask } from 'pdfjs-dist';
+import type { PDFDocumentProxy, PDFPageProxy, RenderTask } from 'pdfjs-dist';
 import {
   getAnnotationColorMeta,
   type Annotation,
@@ -37,6 +37,7 @@ interface PdfPageCanvasProps {
   searchQuery?: string;
   activeSearchMatchIndex?: number;
   registerElement: (pageNumber: number, el: HTMLDivElement | null) => void;
+  onPageSizeMeasured?: (pageNumber: number, width: number, height: number) => void;
   onTextSelection: (payload: {
     pageNumber: number;
     rects: NormalizedRect[];
@@ -73,6 +74,7 @@ export function PdfPageCanvas({
   searchQuery = '',
   activeSearchMatchIndex = -1,
   registerElement,
+  onPageSizeMeasured,
   onTextSelection,
   onCreateAreaAnnotation,
   onClickAnnotation,
@@ -81,6 +83,7 @@ export function PdfPageCanvas({
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const textLayerRef = useRef<HTMLDivElement | null>(null);
   const activeSearchElRef = useRef<HTMLDivElement | null>(null);
+  const renderedPageRef = useRef<PDFPageProxy | null>(null);
   const justDraggedRef = useRef(false);
 
   const [renderError, setRenderError] = useState<string | null>(null);
@@ -105,7 +108,9 @@ export function PdfPageCanvas({
     if (!canvas || !textLayerEl) return;
 
     if (!shouldRender) {
-      // Release GPU/RAM for off-screen pages while preserving exact container height
+      // Release GPU/RAM and PDF.js page cache for off-screen pages while preserving exact container height
+      renderedPageRef.current?.cleanup();
+      renderedPageRef.current = null;
       canvas.width = 0;
       canvas.height = 0;
       textLayerEl.innerHTML = '';
@@ -122,9 +127,19 @@ export function PdfPageCanvas({
       try {
         const page = await pdfDoc.getPage(pageNumber);
         if (cancelled || !canvas || !textLayerEl) return;
+        renderedPageRef.current = page;
+
+        const unitVp = page.getViewport({ scale: 1.0 });
+        if (
+          onPageSizeMeasured &&
+          (Math.abs(unitVp.width - baseWidth) > 1 || Math.abs(unitVp.height - baseHeight) > 1)
+        ) {
+          onPageSizeMeasured(pageNumber, unitVp.width, unitVp.height);
+        }
 
         const viewport = page.getViewport({ scale: zoom });
-        const outputScale = window.devicePixelRatio || 1;
+        const maxDpr = zoom > 1.5 ? 1.5 : 2;
+        const outputScale = Math.min(window.devicePixelRatio || 1, maxDpr);
 
         canvas.width = Math.max(1, Math.floor(viewport.width * outputScale));
         canvas.height = Math.max(1, Math.floor(viewport.height * outputScale));
@@ -174,8 +189,10 @@ export function PdfPageCanvas({
       cancelled = true;
       renderTask?.cancel();
       textLayerInstance?.cancel();
+      renderedPageRef.current?.cleanup();
+      renderedPageRef.current = null;
     };
-  }, [pdfDoc, pageNumber, zoom, shouldRender]);
+  }, [pdfDoc, pageNumber, zoom, shouldRender, baseWidth, baseHeight, onPageSizeMeasured]);
 
   // Compute in-page Ctrl+F search highlight rectangles without mutating TextLayer spans
   useEffect(() => {

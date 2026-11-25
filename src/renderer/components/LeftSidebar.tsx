@@ -40,9 +40,15 @@ const STATUS_LABEL: Record<PaperStatus, string> = {
 };
 
 const STATUS_BADGE: Record<PaperStatus, string> = {
-  unread: 'bg-slate-100 text-slate-600',
-  reading: 'bg-violet-100 text-violet-800',
-  read: 'bg-emerald-100 text-emerald-800',
+  unread: 'bg-slate-100 text-slate-600 hover:bg-slate-200',
+  reading: 'bg-violet-100 text-violet-800 hover:bg-violet-200',
+  read: 'bg-emerald-100 text-emerald-800 hover:bg-emerald-200',
+};
+
+const NEXT_STATUS: Record<PaperStatus, PaperStatus> = {
+  unread: 'reading',
+  reading: 'read',
+  read: 'unread',
 };
 
 interface FolderNode extends Folder {
@@ -94,6 +100,7 @@ interface LeftSidebarProps {
   onEditPaper: (paper: Paper) => void;
   onRequestDeletePaper: (paper: Paper) => void;
   onRequestBatchDeletePapers: (papers: Paper[], onDone: () => void) => void;
+  onChangePaperStatus: (paperId: string, status: PaperStatus) => Promise<void>;
   onOpenSettings: () => void;
 }
 
@@ -126,6 +133,7 @@ export function LeftSidebar({
   onEditPaper,
   onRequestDeletePaper,
   onRequestBatchDeletePapers,
+  onChangePaperStatus,
   onOpenSettings,
 }: LeftSidebarProps) {
   const [expandedIds, setExpandedIds] = useState<Set<string>>(() => new Set());
@@ -732,9 +740,18 @@ export function LeftSidebar({
                     {paper.pageCount > 0 && (
                       <span className="text-[10px] text-slate-400 tabular-nums">{paper.pageCount}p</span>
                     )}
-                    <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${STATUS_BADGE[paper.status]}`}>
+                    <button
+                      type="button"
+                      disabled={batchMode}
+                      title="点击切换阅读状态"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        void onChangePaperStatus(paper.id, NEXT_STATUS[paper.status]);
+                      }}
+                      className={`px-1.5 py-0.5 rounded text-[10px] font-medium transition disabled:pointer-events-none ${STATUS_BADGE[paper.status]}`}
+                    >
                       {STATUS_LABEL[paper.status]}
-                    </span>
+                    </button>
                   </div>
                 </div>
 
