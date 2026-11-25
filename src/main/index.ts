@@ -5,7 +5,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { app, BrowserWindow, dialog, ipcMain, net, protocol, shell } from 'electron';
 import { DataDirLock } from './dataLock.js';
 import { FoxReaderDatabase } from './database.js';
-import { checkLatestGithubRelease, fetchOpenAlexMetadata } from './onlineMetadata.js';
+import { checkLatestGithubRelease, fetchOpenAlexMetadata, translateSelectionText } from './onlineMetadata.js';
 import { SettingsManager } from './settings.js';
 import type {
   CreateAnnotationInput,
@@ -277,6 +277,8 @@ function registerIpcHandlers(): void {
   ipcMain.handle('papers:enrichOnline', (_event, input: EnrichPaperOnlineInput) =>
     fetchOpenAlexMetadata(input),
   );
+
+  ipcMain.handle('translate:text', (_event, text: string) => translateSelectionText(text));
 
   ipcMain.handle('papers:moveToFolder', (_event, paperId: string, folderId: string | null) =>
     database.movePaperToFolder(paperId, folderId),

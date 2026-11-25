@@ -1,13 +1,17 @@
 import { net } from 'electron';
-import type {
-  EnrichPaperOnlineInput,
-  EnrichPaperOnlineResult,
-  UpdateCheckResult,
+import {
+  normalizeTextForTranslation,
+  type EnrichPaperOnlineInput,
+  type EnrichPaperOnlineResult,
+  type TranslateTextResult,
+  type UpdateCheckResult,
 } from '../shared/types.js';
 
 const RELEASES_FALLBACK_URL = 'https://github.com/minorfox/FoxReader/releases';
 const GITHUB_LATEST_API = 'https://api.github.com/repos/minorfox/FoxReader/releases/latest';
 const OPENALEX_API_BASE = 'https://api.openalex.org/works';
+const YOUDAO_TRANSLATE_URL = 'https://aidemo.youdao.com/trans';
+const MYMEMORY_TRANSLATE_URL = 'https://api.mymemory.translated.net/get';
 const REQUEST_TIMEOUT_MS = 10_000;
 
 interface OpenAlexAuthorship {
@@ -270,4 +274,108 @@ export async function checkLatestGithubRelease(currentVersion: string): Promise<
       error: error instanceof Error ? error.message : String(error),
     };
   }
+}
+
+interface YoudaoTranslateResponse {
+  errorCode?: string | number;
+  l?: string;
+  translation?: string[];
+  basic?: {
+    phonetic?: string;
+    explains?: string[];
+  };
+}
+
+interface MyMemoryTranslateResponse {
+  responseStatus?: number;
+  responseData?: {
+    translatedText?: string;
+  };
+}
+
+/**
+ * Translates PDF-selected text using Youdao (primary) with MyMemory fallback.
+ */
+export async function translateSelectionText(rawText: string): Promise<TranslateTextResult> {
+  const cleaned = normalizeTextForTranslation(rawText);
+  if (!cleaned) {
+    return { ok: false, originalText: '', error: '请先划选需要翻译的文本。' };
+  }
+  if (cleaned.length > 2000) {
+    return {
+      ok: false,
+      originalText: cleaned,
+      error: '单次划词翻译最多支持 2000 字符，请缩短选区后重试。',
+    };
+  }
+
+  // 1. Primary: Youdao
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+    try {
+      const res = await net.fetch(YOUDAO_TRANSLATE_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          'User-Agent': 'FoxReader/0.2',
+        },
+        body: new URLSearchParams({ q: cleaned, from: 'Auto', to: 'Auto' }).toString(),
+        signal: controller.signal,
+      });
+      if (res.ok) {
+        const data = (await res.json()) as YoudaoTranslateResponse;
+        const translatedText = Array.isArray(data.translation)
+          ? data.translation.join('\n').trim()
+          : '';
+        if (String(data.errorCode) === '0' && translatedText) {
+          return {
+            ok: true,
+            originalText: cleaned,
+            translatedText,
+            phonetic: data.basic?.phonetic?.trim() || undefined,
+            explains: Array.isArray(data.basic?.explains)
+              ? data.basic.explains.map((s) => s.trim()).filter(Boolean)
+              : undefined,
+            direction: data.l?.trim() || undefined,
+            provider: '有道翻译',
+          };
+        }
+      }
+    } finally {
+      clearTimeout(timer);
+    }
+  } catch {
+    // Fall through cleanly to secondary provider
+  }
+
+  // 2. Fallback: MyMemory
+  try {
+    const nonSpaceLen = cleaned.replace(/\s+/g, '').length || 1;
+    const cjkLen = (cleaned.match(/[\u4e00-\u9fff]/g) ?? []).length;
+    const langpair = cjkLen / nonSpaceLen > 0.3 ? 'zh-CN|en' : 'en|zh-CN';
+    const url = `${MYMEMORY_TRANSLATE_URL}?q=${encodeURIComponent(cleaned)}&langpair=${encodeURIComponent(langpair)}`;
+    const { data } = await fetchJsonWithTimeout<MyMemoryTranslateResponse>(url, {
+      'User-Agent': 'FoxReader/0.2',
+      Accept: 'application/json',
+    });
+    const translatedText = data?.responseData?.translatedText?.trim() ?? '';
+    if (data?.responseStatus === 200 && translatedText) {
+      return {
+        ok: true,
+        originalText: cleaned,
+        translatedText,
+        direction: langpair,
+        provider: 'MyMemory',
+      };
+    }
+  } catch {
+    // Handled by unified error below
+  }
+
+  return {
+    ok: false,
+    originalText: cleaned,
+    error: '翻译服务暂时不可用，请检查网络后重试。',
+  };
 }

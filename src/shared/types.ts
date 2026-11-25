@@ -213,6 +213,28 @@ export interface UpdateCheckResult {
   error?: string;
 }
 
+export interface TranslateTextResult {
+  ok: boolean;
+  originalText: string;
+  translatedText?: string;
+  phonetic?: string;
+  explains?: string[];
+  direction?: string;
+  provider?: string;
+  error?: string;
+}
+
+/**
+ * Normalizes PDF-selected text before translation: repairs hyphenated line breaks and collapses whitespace.
+ */
+export function normalizeTextForTranslation(raw: string): string {
+  return raw
+    .replace(/([A-Za-z])-\s*[\r\n]+\s*([A-Za-z])/g, '$1$2')
+    .replace(/[\r\n\t]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 export interface FoxReaderApi {
   getSettings: () => Promise<AppSettings>;
   selectDataDir: () => Promise<AppSettings | null>;
@@ -228,6 +250,7 @@ export interface FoxReaderApi {
   pickAndImportPdfs: (folderId: string | null) => Promise<ImportPdfItemResult[]>;
   updatePaperMetadata: (paperId: string, input: UpdatePaperMetadataInput) => Promise<Paper>;
   enrichPaperOnline: (input: EnrichPaperOnlineInput) => Promise<EnrichPaperOnlineResult>;
+  translateText: (text: string) => Promise<TranslateTextResult>;
   movePaperToFolder: (paperId: string, folderId: string | null) => Promise<Paper>;
   updatePaperProgress: (paperId: string, lastPage: number, lastZoom: number) => Promise<void>;
   deletePaper: (paperId: string) => Promise<void>;

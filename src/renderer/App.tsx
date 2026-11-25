@@ -450,6 +450,7 @@ export function App() {
       quoteText: string;
       color: AnnotationColor;
       focusComment: boolean;
+      comment?: string;
     }) => {
       if (!selectedPaperId) return;
       const created = await window.foxreader.createAnnotation({
@@ -459,6 +460,7 @@ export function App() {
         rects: payload.rects,
         color: payload.color,
         quoteText: payload.quoteText,
+        ...(payload.comment ? { comment: payload.comment } : {}),
       });
       setActiveColor(payload.color);
       setAnnotations((prev) => sortAnnotations([...prev, created]));

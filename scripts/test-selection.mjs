@@ -8,18 +8,30 @@ import esbuild from 'esbuild';
 async function main() {
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'foxreader-sel-test-'));
   const bundlePath = path.join(tempRoot, 'selection.mjs');
+  const typesBundlePath = path.join(tempRoot, 'types.mjs');
 
   try {
-    await esbuild.build({
-      entryPoints: [path.resolve('src/renderer/lib/selection.ts')],
-      outfile: bundlePath,
-      bundle: true,
-      platform: 'node',
-      format: 'esm',
-      target: 'node22',
-    });
+    await Promise.all([
+      esbuild.build({
+        entryPoints: [path.resolve('src/renderer/lib/selection.ts')],
+        outfile: bundlePath,
+        bundle: true,
+        platform: 'node',
+        format: 'esm',
+        target: 'node22',
+      }),
+      esbuild.build({
+        entryPoints: [path.resolve('src/shared/types.ts')],
+        outfile: typesBundlePath,
+        bundle: true,
+        platform: 'node',
+        format: 'esm',
+        target: 'node22',
+      }),
+    ]);
 
     const { cleanAndNormalizeRects } = await import(pathToFileURL(bundlePath).toString());
+    const { normalizeTextForTranslation } = await import(pathToFileURL(typesBundlePath).toString());
 
     const pageRect = { left: 100, top: 50, width: 600, height: 800 };
 
@@ -74,6 +86,13 @@ async function main() {
       assert.ok(r.w > 0 && r.x + r.w <= 1.00001);
       assert.ok(r.h > 0 && r.y + r.h <= 1.00001);
     }
+
+    // 6. PDF selection text normalization before translation
+    assert.equal(
+      normalizeTextForTranslation('Self-supervised repre-\nsentation   learning\nfor graphs.'),
+      'Self-supervised representation learning for graphs.',
+    );
+    assert.equal(normalizeTextForTranslation('  \n\t '), '');
 
     console.log('ALL_SELECTION_TESTS_PASSED');
   } finally {
