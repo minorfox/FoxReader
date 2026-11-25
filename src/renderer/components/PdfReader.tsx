@@ -27,6 +27,7 @@ import {
   type Paper,
 } from '../../shared/types';
 import { getPaperPdfUrl, pdfjsLib } from '../lib/pdf';
+import { extractSelectionForPage } from '../lib/selection';
 import { PdfPageCanvas } from './PdfPageCanvas';
 
 interface PageSize {
@@ -600,6 +601,25 @@ export function PdfReader({
       {/* Main Scrollable PDF Canvas Viewport */}
       <div
         ref={scrollContainerRef}
+        onMouseUp={(e) => {
+          if (annotationMode !== 'text' || e.altKey) return;
+          requestAnimationFrame(() => {
+            const sel = window.getSelection();
+            if (!sel || sel.isCollapsed) return;
+            for (const [pageNum, pageEl] of pageElementsRef.current.entries()) {
+              const extracted = extractSelectionForPage(sel, pageEl);
+              if (extracted) {
+                handleTextSelection({
+                  pageNumber: pageNum,
+                  rects: extracted.rects,
+                  quoteText: extracted.quoteText,
+                  anchor: extracted.anchor,
+                });
+                break;
+              }
+            }
+          });
+        }}
         onScroll={() => {
           if (selectionBar) setSelectionBar(null);
           if (popover) setPopover(null);

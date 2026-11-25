@@ -304,7 +304,9 @@ export function PdfPageCanvas({
       onMouseLeave={() => setHoveredAnnotationId(null)}
       onClick={handleClick}
       style={{ width: `${displayWidth}px`, height: `${displayHeight}px` }}
-      className={`relative mx-auto bg-white shadow-md ring-1 ring-slate-900/5 shrink-0 select-none ${
+      className={`relative mx-auto bg-white shadow-md ring-1 ring-slate-900/5 shrink-0 ${
+        selectionEnabled ? 'select-text' : 'select-none'
+      } ${
         annotationMode === 'area'
           ? 'cursor-crosshair'
           : hoveredAnnotationId
@@ -383,7 +385,7 @@ export function PdfPageCanvas({
 
       <div
         ref={textLayerRef}
-        className={`textLayer ${selectionEnabled ? '' : 'pointer-events-none'}`}
+        className={`textLayer ${selectionEnabled ? 'select-text' : 'pointer-events-none select-none'}`}
       />
 
       {renderError && (

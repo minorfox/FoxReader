@@ -33,6 +33,8 @@
   forced-color-adjust: none;
   transform-origin: 0 0;
   caret-color: CanvasText;
+  user-select: text;
+  -webkit-user-select: text;
   z-index: 2;
   --user-unit: 1;
   --total-scale-factor: calc(var(--scale-factor, 1) * var(--user-unit));
@@ -46,6 +48,8 @@
   position: absolute;
   white-space: pre;
   cursor: text;
+  user-select: text;
+  -webkit-user-select: text;
   transform-origin: 0% 0%;
 }
 
