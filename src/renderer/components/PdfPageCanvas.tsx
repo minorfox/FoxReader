@@ -1,6 +1,12 @@
-import { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import type { PDFDocumentProxy, RenderTask } from 'pdfjs-dist';
+import {
+  getAnnotationColorMeta,
+  type Annotation,
+  type NormalizedRect,
+} from '../../shared/types';
 import { pdfjsLib } from '../lib/pdf';
+import { cropCanvasRegionToPngBase64, extractSelectionForPage } from '../lib/selection';
 
 interface PdfPageCanvasProps {
   pdfDoc: PDFDocumentProxy;
@@ -9,8 +15,31 @@ interface PdfPageCanvasProps {
   baseHeight: number;
   zoom: number;
   shouldRender: boolean;
-  selectionEnabled: boolean;
+  annotationMode: 'text' | 'area';
+  annotations: Annotation[];
+  selectedAnnotationId: string | null;
+  pulsingAnnotationId: string | null;
   registerElement: (pageNumber: number, el: HTMLDivElement | null) => void;
+  onTextSelection: (payload: {
+    pageNumber: number;
+    rects: NormalizedRect[];
+    quoteText: string;
+    anchor: { clientX: number; clientY: number };
+  }) => void;
+  onCreateAreaAnnotation: (payload: {
+    pageNumber: number;
+    rects: NormalizedRect[];
+    snapshotPngBase64: string;
+  }) => void;
+  onClickAnnotation: (annotation: Annotation, anchor: { clientX: number; clientY: number }) => void;
+}
+
+function clamp01(value: number): number {
+  return Math.min(1, Math.max(0, value));
+}
+
+function round5(value: number): number {
+  return Math.round(value * 100000) / 100000;
 }
 
 export function PdfPageCanvas({
@@ -20,13 +49,23 @@ export function PdfPageCanvas({
   baseHeight,
   zoom,
   shouldRender,
-  selectionEnabled,
+  annotationMode,
+  annotations,
+  selectedAnnotationId,
+  pulsingAnnotationId,
   registerElement,
+  onTextSelection,
+  onCreateAreaAnnotation,
+  onClickAnnotation,
 }: PdfPageCanvasProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const textLayerRef = useRef<HTMLDivElement | null>(null);
+  const justDraggedRef = useRef(false);
+
   const [renderError, setRenderError] = useState<string | null>(null);
+  const [hoveredAnnotationId, setHoveredAnnotationId] = useState<string | null>(null);
+  const [dragBox, setDragBox] = useState<NormalizedRect | null>(null);
 
   const displayWidth = Math.max(1, Math.round(baseWidth * zoom));
   const displayHeight = Math.max(1, Math.round(baseHeight * zoom));
@@ -111,18 +150,242 @@ export function PdfPageCanvas({
     };
   }, [pdfDoc, pageNumber, zoom, shouldRender]);
 
+  const findHitAnnotation = (clientX: number, clientY: number): Annotation | null => {
+    const el = containerRef.current;
+    if (!el || annotations.length === 0) return null;
+    const box = el.getBoundingClientRect();
+    if (box.width <= 0 || box.height <= 0) return null;
+
+    const nx = (clientX - box.left) / box.width;
+    const ny = (clientY - box.top) / box.height;
+    const pad = 0.004;
+
+    const hits: { ann: Annotation; area: number }[] = [];
+    for (const ann of annotations) {
+      const matched = ann.rects.some(
+        (r) =>
+          nx >= r.x - pad &&
+          nx <= r.x + r.w + pad &&
+          ny >= r.y - pad &&
+          ny <= r.y + r.h + pad,
+      );
+      if (matched) {
+        const area = ann.rects.reduce((sum, r) => sum + r.w * r.h, 0);
+        hits.push({ ann, area });
+      }
+    }
+
+    if (hits.length === 0) return null;
+    hits.sort((a, b) => a.area - b.area);
+    return hits[0].ann;
+  };
+
+  const handleMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (e.button !== 0) return;
+    const isAreaGesture = annotationMode === 'area' || e.altKey;
+    if (!isAreaGesture) return;
+
+    const el = containerRef.current;
+    const canvas = canvasRef.current;
+    if (!el || !canvas || canvas.width === 0) return;
+
+    e.preventDefault();
+    window.getSelection()?.removeAllRanges();
+
+    const pageBox = el.getBoundingClientRect();
+    const startX = clamp01((e.clientX - pageBox.left) / pageBox.width);
+    const startY = clamp01((e.clientY - pageBox.top) / pageBox.height);
+
+    let latestRect: NormalizedRect = { x: startX, y: startY, w: 0, h: 0 };
+    setDragBox(latestRect);
+
+    const onMove = (moveEvt: MouseEvent) => {
+      const curX = clamp01((moveEvt.clientX - pageBox.left) / pageBox.width);
+      const curY = clamp01((moveEvt.clientY - pageBox.top) / pageBox.height);
+      latestRect = {
+        x: round5(Math.min(startX, curX)),
+        y: round5(Math.min(startY, curY)),
+        w: round5(Math.abs(curX - startX)),
+        h: round5(Math.abs(curY - startY)),
+      };
+      setDragBox(latestRect);
+    };
+
+    const onUp = () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+      setDragBox(null);
+
+      justDraggedRef.current = true;
+      setTimeout(() => {
+        justDraggedRef.current = false;
+      }, 150);
+
+      const pxW = latestRect.w * pageBox.width;
+      const pxH = latestRect.h * pageBox.height;
+      if (pxW < 10 || pxH < 10 || canvas.width <= 0) {
+        return;
+      }
+
+      try {
+        const snapshotPngBase64 = cropCanvasRegionToPngBase64(canvas, latestRect);
+        onCreateAreaAnnotation({
+          pageNumber,
+          rects: [latestRect],
+          snapshotPngBase64,
+        });
+      } catch (err) {
+        console.error('[FoxReader] Area snapshot failed:', err);
+      }
+    };
+
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  };
+
+  const handleMouseUp = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (justDraggedRef.current || annotationMode !== 'text' || e.altKey) return;
+
+    const el = containerRef.current;
+    if (!el) return;
+
+    requestAnimationFrame(() => {
+      const sel = window.getSelection();
+      if (!sel || sel.isCollapsed) return;
+      const extracted = extractSelectionForPage(sel, el);
+      if (extracted) {
+        onTextSelection({
+          pageNumber,
+          rects: extracted.rects,
+          quoteText: extracted.quoteText,
+          anchor: extracted.anchor,
+        });
+      }
+    });
+  };
+
+  const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (dragBox || annotationMode === 'area' || e.altKey) {
+      if (hoveredAnnotationId !== null) setHoveredAnnotationId(null);
+      return;
+    }
+    const sel = window.getSelection();
+    if (sel && !sel.isCollapsed) {
+      if (hoveredAnnotationId !== null) setHoveredAnnotationId(null);
+      return;
+    }
+    const hit = findHitAnnotation(e.clientX, e.clientY);
+    const nextId = hit ? hit.id : null;
+    if (nextId !== hoveredAnnotationId) {
+      setHoveredAnnotationId(nextId);
+    }
+  };
+
+  const handleClick = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (justDraggedRef.current) return;
+    const sel = window.getSelection();
+    if (sel && !sel.isCollapsed) return;
+
+    const hit = findHitAnnotation(e.clientX, e.clientY);
+    if (hit) {
+      onClickAnnotation(hit, { clientX: e.clientX, clientY: e.clientY });
+    }
+  };
+
+  const selectionEnabled = annotationMode === 'text';
+
   return (
     <div
       ref={containerRef}
       data-page-number={pageNumber}
+      onMouseDown={handleMouseDown}
+      onMouseUp={handleMouseUp}
+      onMouseMove={handleMouseMove}
+      onMouseLeave={() => setHoveredAnnotationId(null)}
+      onClick={handleClick}
       style={{ width: `${displayWidth}px`, height: `${displayHeight}px` }}
-      className="relative mx-auto bg-white shadow-md ring-1 ring-slate-900/5 shrink-0 select-none"
+      className={`relative mx-auto bg-white shadow-md ring-1 ring-slate-900/5 shrink-0 select-none ${
+        annotationMode === 'area'
+          ? 'cursor-crosshair'
+          : hoveredAnnotationId
+            ? 'cursor-pointer'
+            : ''
+      }`}
     >
       <canvas ref={canvasRef} className="block" />
+
+      {/* Annotation Overlay Layer (below TextLayer so text remains selectable) */}
+      <div className="pointer-events-none absolute inset-0 z-[1] overflow-hidden">
+        {annotations.map((ann) => {
+          const colorMeta = getAnnotationColorMeta(ann.color);
+          const isSelected = ann.id === selectedAnnotationId;
+          const isHovered = ann.id === hoveredAnnotationId;
+          const isPulsing = ann.id === pulsingAnnotationId;
+
+          return ann.rects.map((rect, idx) => {
+            const style: React.CSSProperties = {
+              left: `${rect.x * 100}%`,
+              top: `${rect.y * 100}%`,
+              width: `${rect.w * 100}%`,
+              height: `${rect.h * 100}%`,
+            };
+
+            if (ann.type === 'text') {
+              return (
+                <div
+                  key={`${ann.id}-${idx}`}
+                  style={{
+                    ...style,
+                    backgroundColor: colorMeta.overlayBg,
+                    mixBlendMode: 'multiply',
+                    outline:
+                      isSelected || isHovered
+                        ? `1.5px solid ${colorMeta.border}`
+                        : undefined,
+                  }}
+                  className={`absolute rounded-[2px] transition-shadow ${
+                    isPulsing ? 'fox-annotation-pulse' : ''
+                  }`}
+                />
+              );
+            }
+
+            return (
+              <div
+                key={`${ann.id}-${idx}`}
+                style={{
+                  ...style,
+                  backgroundColor: colorMeta.areaBg,
+                  border: `2px solid ${colorMeta.border}`,
+                  boxShadow:
+                    isSelected || isHovered
+                      ? `0 0 0 2px ${colorMeta.overlayBg}`
+                      : undefined,
+                }}
+                className={`absolute rounded ${isPulsing ? 'fox-annotation-pulse' : ''}`}
+              />
+            );
+          });
+        })}
+
+        {dragBox && (
+          <div
+            style={{
+              left: `${dragBox.x * 100}%`,
+              top: `${dragBox.y * 100}%`,
+              width: `${dragBox.w * 100}%`,
+              height: `${dragBox.h * 100}%`,
+            }}
+            className="absolute rounded border-2 border-dashed border-violet-600 bg-violet-500/15"
+          />
+        )}
+      </div>
+
       <div
         ref={textLayerRef}
         className={`textLayer ${selectionEnabled ? '' : 'pointer-events-none'}`}
       />
+
       {renderError && (
         <div className="absolute inset-x-4 top-4 z-10 rounded-lg border border-red-200 bg-red-50/95 px-3 py-2 text-xs text-red-700 shadow-sm">
           第 {pageNumber} 页渲染失败：{renderError}

@@ -3,16 +3,43 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import type {
+  Annotation,
+  AnnotationColor,
+  CreateAnnotationInput,
   DeleteFolderResult,
   Folder,
   ImportPdfItemResult,
   LibraryOverview,
+  NormalizedRect,
   Paper,
   PaperListQuery,
   PaperStatus,
   Tag,
+  UpdateAnnotationInput,
   UpdatePaperMetadataInput,
 } from '../shared/types.js';
+
+const VALID_ANNOTATION_COLORS = new Set<AnnotationColor>([
+  'yellow',
+  'green',
+  'blue',
+  'pink',
+  'purple',
+]);
+
+interface AnnotationRow {
+  id: string;
+  paper_id: string;
+  type: 'text' | 'area';
+  page_number: number;
+  rects_json: string;
+  color: string;
+  quote_text: string;
+  snapshot_path: string;
+  comment: string;
+  created_at: number;
+  updated_at: number;
+}
 
 interface FolderRow {
   id: string;
@@ -51,6 +78,45 @@ function mapFolder(row: FolderRow): Folder {
     parentId: row.parent_id,
     sortOrder: row.sort_order,
     createdAt: row.created_at,
+  };
+}
+
+function normalizeAnnotationColor(raw: string): AnnotationColor {
+  return VALID_ANNOTATION_COLORS.has(raw as AnnotationColor)
+    ? (raw as AnnotationColor)
+    : 'yellow';
+}
+
+function parseRectsJson(raw: string): NormalizedRect[] {
+  try {
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(
+      (r): r is NormalizedRect =>
+        r &&
+        typeof r.x === 'number' &&
+        typeof r.y === 'number' &&
+        typeof r.w === 'number' &&
+        typeof r.h === 'number',
+    );
+  } catch {
+    return [];
+  }
+}
+
+function mapAnnotation(row: AnnotationRow): Annotation {
+  return {
+    id: row.id,
+    paperId: row.paper_id,
+    type: row.type,
+    pageNumber: row.page_number,
+    rects: parseRectsJson(row.rects_json),
+    color: normalizeAnnotationColor(row.color),
+    quoteText: row.quote_text,
+    snapshotPath: row.snapshot_path,
+    comment: row.comment,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
   };
 }
 
@@ -586,6 +652,129 @@ export class FoxReaderDatabase {
       const snapFullPath = path.isAbsolute(snap.snapshot_path)
         ? snap.snapshot_path
         : path.join(dataDir, 'snapshots', snap.snapshot_path);
+      await fs.promises.rm(snapFullPath, { force: true });
+    }
+  }
+
+  public listAnnotations(paperId: string): Annotation[] {
+    const rows = this.db
+      .prepare('SELECT * FROM annotations WHERE paper_id = ?')
+      .all(paperId) as unknown as AnnotationRow[];
+    const mapped = rows.map(mapAnnotation);
+    mapped.sort((a, b) => {
+      if (a.pageNumber !== b.pageNumber) return a.pageNumber - b.pageNumber;
+      const ay = a.rects[0]?.y ?? 0;
+      const by = b.rects[0]?.y ?? 0;
+      if (ay !== by) return ay - by;
+      return a.createdAt - b.createdAt;
+    });
+    return mapped;
+  }
+
+  public async createAnnotation(input: CreateAnnotationInput, dataDir: string): Promise<Annotation> {
+    const paper = this.db.prepare('SELECT id FROM papers WHERE id = ?').get(input.paperId);
+    if (!paper) {
+      throw new Error('Paper not found.');
+    }
+    if (!Number.isInteger(input.pageNumber) || input.pageNumber < 1) {
+      throw new Error('Invalid page number.');
+    }
+    if (!Array.isArray(input.rects) || input.rects.length === 0) {
+      throw new Error('Annotation rects cannot be empty.');
+    }
+
+    const id = crypto.randomUUID();
+    const color = normalizeAnnotationColor(input.color);
+    const quoteText = (input.quoteText ?? '').trim();
+    const comment = input.comment ?? '';
+    const now = Date.now();
+    let snapshotPath = '';
+
+    if (input.type === 'area' && input.snapshotPngBase64) {
+      const base64Body = input.snapshotPngBase64.replace(/^data:image\/png;base64,/, '');
+      const snapshotsDir = path.join(dataDir, 'snapshots');
+      await fs.promises.mkdir(snapshotsDir, { recursive: true });
+      snapshotPath = `${id}.png`;
+      await fs.promises.writeFile(path.join(snapshotsDir, snapshotPath), Buffer.from(base64Body, 'base64'));
+    }
+
+    this.runInTransaction(() => {
+      this.db
+        .prepare(
+          `INSERT INTO annotations (
+            id, paper_id, type, page_number, rects_json, color,
+            quote_text, snapshot_path, comment, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          id,
+          input.paperId,
+          input.type,
+          input.pageNumber,
+          JSON.stringify(input.rects),
+          color,
+          quoteText,
+          snapshotPath,
+          comment,
+          now,
+          now,
+        );
+      this.syncPaperSearchIndex(input.paperId);
+    });
+
+    const created = this.db
+      .prepare('SELECT * FROM annotations WHERE id = ?')
+      .get(id) as unknown as AnnotationRow | undefined;
+    if (!created) {
+      throw new Error('Failed to load created annotation.');
+    }
+    return mapAnnotation(created);
+  }
+
+  public updateAnnotation(id: string, input: UpdateAnnotationInput): Annotation {
+    const existing = this.db
+      .prepare('SELECT * FROM annotations WHERE id = ?')
+      .get(id) as unknown as AnnotationRow | undefined;
+    if (!existing) {
+      throw new Error('Annotation not found.');
+    }
+
+    const nextColor =
+      input.color !== undefined ? normalizeAnnotationColor(input.color) : normalizeAnnotationColor(existing.color);
+    const nextComment = input.comment !== undefined ? input.comment : existing.comment;
+    const now = Date.now();
+
+    this.runInTransaction(() => {
+      this.db
+        .prepare('UPDATE annotations SET color = ?, comment = ?, updated_at = ? WHERE id = ?')
+        .run(nextColor, nextComment, now, id);
+      this.syncPaperSearchIndex(existing.paper_id);
+    });
+
+    const updated = this.db
+      .prepare('SELECT * FROM annotations WHERE id = ?')
+      .get(id) as unknown as AnnotationRow | undefined;
+    if (!updated) {
+      throw new Error('Failed to load updated annotation.');
+    }
+    return mapAnnotation(updated);
+  }
+
+  public async deleteAnnotation(id: string, dataDir: string): Promise<void> {
+    const existing = this.db
+      .prepare('SELECT id, paper_id, snapshot_path FROM annotations WHERE id = ?')
+      .get(id) as { id: string; paper_id: string; snapshot_path: string } | undefined;
+    if (!existing) return;
+
+    this.runInTransaction(() => {
+      this.db.prepare('DELETE FROM annotations WHERE id = ?').run(id);
+      this.syncPaperSearchIndex(existing.paper_id);
+    });
+
+    if (existing.snapshot_path) {
+      const snapFullPath = path.isAbsolute(existing.snapshot_path)
+        ? existing.snapshot_path
+        : path.join(dataDir, 'snapshots', existing.snapshot_path);
       await fs.promises.rm(snapFullPath, { force: true });
     }
   }

@@ -1,21 +1,31 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
 import {
+  BookOpenCheck,
+  Check,
   ChevronLeft,
   ChevronRight,
+  Copy,
   FileUp,
   Highlighter,
   Maximize2,
+  MessageSquarePlus,
   PanelLeftClose,
   PanelLeftOpen,
   PanelRightClose,
   PanelRightOpen,
   SquareDashedMousePointer,
+  Trash2,
   ZoomIn,
   ZoomOut,
-  BookOpenCheck,
 } from 'lucide-react';
-import type { Paper } from '../../shared/types';
+import {
+  ANNOTATION_COLORS,
+  type Annotation,
+  type AnnotationColor,
+  type NormalizedRect,
+  type Paper,
+} from '../../shared/types';
 import { getPaperPdfUrl, pdfjsLib } from '../lib/pdf';
 import { PdfPageCanvas } from './PdfPageCanvas';
 
@@ -24,10 +34,26 @@ interface PageSize {
   height: number;
 }
 
+interface TextSelectionPrompt {
+  pageNumber: number;
+  rects: NormalizedRect[];
+  quoteText: string;
+  anchor: { clientX: number; clientY: number };
+}
+
+interface AnnotationPopoverState {
+  annotationId: string;
+  anchor: { clientX: number; clientY: number };
+}
+
 const ZOOM_PRESETS = [0.5, 0.75, 1.0, 1.25, 1.5, 2.0];
 
 interface PdfReaderProps {
   paper: Paper | null;
+  annotations: Annotation[];
+  activeColor: AnnotationColor;
+  selectedAnnotationId: string | null;
+  jumpRequest: { annotation: Annotation; nonce: number } | null;
   leftCollapsed: boolean;
   rightCollapsed: boolean;
   onToggleLeft: () => void;
@@ -35,10 +61,30 @@ interface PdfReaderProps {
   onSaveProgress: (paperId: string, lastPage: number, lastZoom: number) => void;
   onSyncPageCount: (paperId: string, pageCount: number) => void;
   onPickAndImport: () => void;
+  onCreateTextAnnotation: (payload: {
+    pageNumber: number;
+    rects: NormalizedRect[];
+    quoteText: string;
+    color: AnnotationColor;
+    focusComment: boolean;
+  }) => Promise<void>;
+  onCreateAreaAnnotation: (payload: {
+    pageNumber: number;
+    rects: NormalizedRect[];
+    snapshotPngBase64: string;
+  }) => Promise<void>;
+  onUpdateAnnotationColor: (id: string, color: AnnotationColor) => Promise<void>;
+  onDeleteAnnotation: (id: string) => Promise<void>;
+  onSelectAnnotationFromPdf: (annotation: Annotation) => void;
+  onCopyText: (text: string) => void;
 }
 
 export function PdfReader({
   paper,
+  annotations,
+  activeColor,
+  selectedAnnotationId,
+  jumpRequest,
   leftCollapsed,
   rightCollapsed,
   onToggleLeft,
@@ -46,6 +92,12 @@ export function PdfReader({
   onSaveProgress,
   onSyncPageCount,
   onPickAndImport,
+  onCreateTextAnnotation,
+  onCreateAreaAnnotation,
+  onUpdateAnnotationColor,
+  onDeleteAnnotation,
+  onSelectAnnotationFromPdf,
+  onCopyText,
 }: PdfReaderProps) {
   const scrollContainerRef = useRef<HTMLDivElement | null>(null);
   const pageElementsRef = useRef<Map<number, HTMLDivElement>>(new Map());
@@ -62,8 +114,27 @@ export function PdfReader({
   const [containerWidth, setContainerWidth] = useState(800);
   const [annotationMode, setAnnotationMode] = useState<'text' | 'area'>('text');
 
+  const [selectionBar, setSelectionBar] = useState<TextSelectionPrompt | null>(null);
+  const [popover, setPopover] = useState<AnnotationPopoverState | null>(null);
+  const [pulsingAnnotationId, setPulsingAnnotationId] = useState<string | null>(null);
+
   const visibleRatiosRef = useRef<Map<number, number>>(new Map());
   const pendingInitialJumpRef = useRef<number | null>(null);
+
+  const annotationsByPage = useMemo(() => {
+    const map = new Map<number, Annotation[]>();
+    for (const ann of annotations) {
+      const list = map.get(ann.pageNumber);
+      if (list) list.push(ann);
+      else map.set(ann.pageNumber, [ann]);
+    }
+    return map;
+  }, [annotations]);
+
+  const popoverAnnotation = useMemo(() => {
+    if (!popover) return null;
+    return annotations.find((a) => a.id === popover.annotationId) ?? null;
+  }, [popover, annotations]);
 
   const registerElement = useCallback((pageNumber: number, el: HTMLDivElement | null) => {
     if (el) pageElementsRef.current.set(pageNumber, el);
@@ -83,8 +154,37 @@ export function PdfReader({
     return () => ro.disconnect();
   }, []);
 
+  // Dismiss popovers on Escape or outside click
+  useEffect(() => {
+    if (!selectionBar && !popover) return;
+
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setSelectionBar(null);
+        setPopover(null);
+      }
+    };
+    const onMouseDown = (e: MouseEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (target?.closest('[data-fox-popover]')) return;
+      setSelectionBar(null);
+      setPopover(null);
+    };
+
+    window.addEventListener('keydown', onKeyDown);
+    window.addEventListener('mousedown', onMouseDown);
+    return () => {
+      window.removeEventListener('keydown', onKeyDown);
+      window.removeEventListener('mousedown', onMouseDown);
+    };
+  }, [selectionBar, popover]);
+
   // Load PDF document when selected paper changes
   useEffect(() => {
+    setSelectionBar(null);
+    setPopover(null);
+    setPulsingAnnotationId(null);
+
     if (!paper) {
       setPdfDoc(null);
       setPageSizes([]);
@@ -183,16 +283,19 @@ export function PdfReader({
     return Math.min(3.0, Math.max(0.35, Number((containerWidth / baseW).toFixed(3))));
   }, [fitWidth, pageSizes, containerWidth, zoom]);
 
-  const scrollToPage = useCallback((targetPage: number, behavior: ScrollBehavior = 'smooth') => {
-    if (pageSizes.length === 0) return;
-    const clamped = Math.min(pageSizes.length, Math.max(1, targetPage));
-    const el = pageElementsRef.current.get(clamped);
-    if (el) {
-      el.scrollIntoView({ behavior, block: 'start' });
-    }
-    setCurrentPage(clamped);
-    setPageInput(String(clamped));
-  }, [pageSizes.length]);
+  const scrollToPage = useCallback(
+    (targetPage: number, behavior: ScrollBehavior = 'smooth') => {
+      if (pageSizes.length === 0) return;
+      const clamped = Math.min(pageSizes.length, Math.max(1, targetPage));
+      const el = pageElementsRef.current.get(clamped);
+      if (el) {
+        el.scrollIntoView({ behavior, block: 'start' });
+      }
+      setCurrentPage(clamped);
+      setPageInput(String(clamped));
+    },
+    [pageSizes.length],
+  );
 
   // Restore saved page scroll position after page placeholders mount
   useEffect(() => {
@@ -205,6 +308,37 @@ export function PdfReader({
       });
     }
   }, [pdfDoc, pageSizes.length, scrollToPage]);
+
+  // Handle bidirectional jump from right sidebar annotation card -> PDF position
+  useEffect(() => {
+    if (!jumpRequest || !pdfDoc || pageSizes.length === 0) return;
+    const { annotation } = jumpRequest;
+    const scrollEl = scrollContainerRef.current;
+    const pageEl = pageElementsRef.current.get(annotation.pageNumber);
+
+    setCurrentPage(annotation.pageNumber);
+    setPageInput(String(annotation.pageNumber));
+    setPopover(null);
+    setSelectionBar(null);
+
+    if (scrollEl && pageEl) {
+      const containerRect = scrollEl.getBoundingClientRect();
+      const pageRect = pageEl.getBoundingClientRect();
+      const relativePageTop = pageRect.top - containerRect.top + scrollEl.scrollTop;
+      const firstY = annotation.rects[0]?.y ?? 0;
+      const targetTop = Math.max(
+        0,
+        relativePageTop + firstY * pageEl.offsetHeight - scrollEl.clientHeight * 0.28,
+      );
+      scrollEl.scrollTo({ top: targetTop, behavior: 'smooth' });
+    }
+
+    setPulsingAnnotationId(annotation.id);
+    const timer = setTimeout(() => {
+      setPulsingAnnotationId((curr) => (curr === annotation.id ? null : curr));
+    }, 1600);
+    return () => clearTimeout(timer);
+  }, [jumpRequest, pdfDoc, pageSizes.length]);
 
   // IntersectionObserver to track visible page for lazy rendering window
   useEffect(() => {
@@ -279,10 +413,38 @@ export function PdfReader({
     }
   };
 
+  const handleTextSelection = useCallback((payload: TextSelectionPrompt) => {
+    setPopover(null);
+    setSelectionBar(payload);
+  }, []);
+
+  const handleClickAnnotation = useCallback(
+    (annotation: Annotation, anchor: { clientX: number; clientY: number }) => {
+      setSelectionBar(null);
+      setPopover({ annotationId: annotation.id, anchor });
+      onSelectAnnotationFromPdf(annotation);
+    },
+    [onSelectAnnotationFromPdf],
+  );
+
+  const handleCommitTextHighlight = async (color: AnnotationColor, focusComment: boolean) => {
+    if (!selectionBar) return;
+    const payload = selectionBar;
+    setSelectionBar(null);
+    window.getSelection()?.removeAllRanges();
+    await onCreateTextAnnotation({
+      pageNumber: payload.pageNumber,
+      rects: payload.rects,
+      quoteText: payload.quoteText,
+      color,
+      focusComment,
+    });
+  };
+
   const totalPages = pdfDoc?.numPages ?? 0;
 
   return (
-    <main className="flex-1 min-w-0 bg-slate-100 flex flex-col h-full">
+    <main className="flex-1 min-w-0 bg-slate-100 flex flex-col h-full relative">
       {/* Top Toolbar */}
       <header className="h-12 bg-white border-b border-slate-200 px-3 flex items-center justify-between gap-2 shrink-0 select-none">
         <div className="flex items-center gap-2 min-w-0 flex-1">
@@ -303,7 +465,6 @@ export function PdfReader({
         {/* Center Controls: Page Jump + Zoom */}
         {paper && totalPages > 0 && (
           <div className="flex items-center gap-2 shrink-0">
-            {/* Page Jump */}
             <div className="flex items-center gap-1 rounded-lg border border-slate-200 bg-slate-50 px-1.5 py-0.5">
               <button
                 type="button"
@@ -320,7 +481,7 @@ export function PdfReader({
                   value={pageInput}
                   onChange={(e) => setPageInput(e.target.value)}
                   onBlur={() => setPageInput(String(currentPage))}
-                  className="w-9 text-center rounded border border-transparent hover:border-slate-200 focus:border-amber-500 focus:bg-white focus:outline-none py-0.5 tabular-nums text-slate-800"
+                  className="w-9 text-center rounded border border-transparent hover:border-slate-200 focus:border-violet-500 focus:bg-white focus:outline-none py-0.5 tabular-nums text-slate-800"
                 />
                 <span className="text-slate-400 tabular-nums">/ {totalPages}</span>
               </form>
@@ -335,7 +496,6 @@ export function PdfReader({
               </button>
             </div>
 
-            {/* Zoom Controls */}
             <div className="flex items-center gap-0.5 rounded-lg border border-slate-200 bg-slate-50 px-1 py-0.5">
               <button
                 type="button"
@@ -383,7 +543,7 @@ export function PdfReader({
                 onClick={() => setFitWidth((prev) => !prev)}
                 title="适应宽度"
                 className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium transition ${
-                  fitWidth ? 'bg-amber-600 text-white' : 'text-slate-600 hover:bg-white'
+                  fitWidth ? 'bg-violet-600 text-white' : 'text-slate-600 hover:bg-white'
                 }`}
               >
                 <Maximize2 className="w-3 h-3" />
@@ -400,7 +560,7 @@ export function PdfReader({
               <button
                 type="button"
                 onClick={() => setAnnotationMode('text')}
-                title="文本划选模式"
+                title="文本划选模式（按住 Alt + 拖拽可快速区域框选）"
                 className={`inline-flex items-center gap-1 px-2 py-1 rounded text-[11px] font-medium transition ${
                   annotationMode === 'text'
                     ? 'bg-white text-slate-900 shadow-2xs'
@@ -413,10 +573,10 @@ export function PdfReader({
               <button
                 type="button"
                 onClick={() => setAnnotationMode('area')}
-                title="区域框选模式（M2 里程碑将启用截图与批注落库）"
+                title="区域框选模式：拖拽框选公式或图表并截取 PNG 缩略图"
                 className={`inline-flex items-center gap-1 px-2 py-1 rounded text-[11px] font-medium transition ${
                   annotationMode === 'area'
-                    ? 'bg-white text-amber-800 shadow-2xs'
+                    ? 'bg-white text-violet-700 shadow-2xs'
                     : 'text-slate-500 hover:text-slate-800'
                 }`}
               >
@@ -438,11 +598,18 @@ export function PdfReader({
       </header>
 
       {/* Main Scrollable PDF Canvas Viewport */}
-      <div ref={scrollContainerRef} className="flex-1 overflow-auto p-6">
+      <div
+        ref={scrollContainerRef}
+        onScroll={() => {
+          if (selectionBar) setSelectionBar(null);
+          if (popover) setPopover(null);
+        }}
+        className="flex-1 overflow-auto p-6"
+      >
         {!paper ? (
           <div className="h-full flex items-center justify-center">
             <div className="max-w-md w-full rounded-2xl border border-dashed border-slate-300 bg-white/80 p-8 text-center shadow-xs space-y-4">
-              <div className="w-12 h-12 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center mx-auto">
+              <div className="w-12 h-12 rounded-xl bg-violet-50 text-violet-600 flex items-center justify-center mx-auto">
                 <BookOpenCheck className="w-6 h-6" />
               </div>
               <div className="space-y-1.5">
@@ -454,7 +621,7 @@ export function PdfReader({
               <button
                 type="button"
                 onClick={onPickAndImport}
-                className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-amber-600 hover:bg-amber-700 text-white text-xs font-medium transition shadow-xs"
+                className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-violet-600 hover:bg-violet-700 text-white text-xs font-medium transition shadow-xs"
               >
                 <FileUp className="w-4 h-4" />
                 选择 PDF 导入
@@ -485,14 +652,110 @@ export function PdfReader({
                   baseHeight={size.height}
                   zoom={effectiveZoom}
                   shouldRender={shouldRender}
-                  selectionEnabled={annotationMode === 'text'}
+                  annotationMode={annotationMode}
+                  annotations={annotationsByPage.get(pageNum) ?? []}
+                  selectedAnnotationId={selectedAnnotationId}
+                  pulsingAnnotationId={pulsingAnnotationId}
                   registerElement={registerElement}
+                  onTextSelection={handleTextSelection}
+                  onCreateAreaAnnotation={onCreateAreaAnnotation}
+                  onClickAnnotation={handleClickAnnotation}
                 />
               );
             })}
           </div>
         ) : null}
       </div>
+
+      {/* Floating Selection Toolbar */}
+      {selectionBar && (
+        <div
+          data-fox-popover
+          style={{
+            left: `${Math.min(window.innerWidth - 320, Math.max(12, selectionBar.anchor.clientX - 140))}px`,
+            top: `${Math.max(56, selectionBar.anchor.clientY - 48)}px`,
+          }}
+          className="fixed z-50 flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-2.5 py-1.5 shadow-xl"
+        >
+          <div className="flex items-center gap-1 pr-1.5 border-r border-slate-200">
+            {ANNOTATION_COLORS.map((c) => (
+              <button
+                key={c.id}
+                type="button"
+                title={`高亮（${c.label}）`}
+                onClick={() => void handleCommitTextHighlight(c.id, false)}
+                style={{ backgroundColor: c.swatch }}
+                className="w-5 h-5 rounded-full ring-1 ring-black/10 hover:scale-110 transition flex items-center justify-center"
+              >
+                {activeColor === c.id && <Check className="w-3 h-3 text-slate-900/80 stroke-[2.5]" />}
+              </button>
+            ))}
+          </div>
+
+          <button
+            type="button"
+            onClick={() => void handleCommitTextHighlight(activeColor, true)}
+            className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium text-violet-700 hover:bg-violet-50 transition"
+          >
+            <MessageSquarePlus className="w-3.5 h-3.5" />
+            高亮并写备注
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              onCopyText(selectionBar.quoteText);
+              setSelectionBar(null);
+              window.getSelection()?.removeAllRanges();
+            }}
+            className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium text-slate-600 hover:bg-slate-100 transition"
+          >
+            <Copy className="w-3.5 h-3.5" />
+            复制
+          </button>
+        </div>
+      )}
+
+      {/* Existing Annotation Click Popover */}
+      {popover && popoverAnnotation && (
+        <div
+          data-fox-popover
+          style={{
+            left: `${Math.min(window.innerWidth - 240, Math.max(12, popover.anchor.clientX - 100))}px`,
+            top: `${Math.max(56, popover.anchor.clientY - 46)}px`,
+          }}
+          className="fixed z-50 flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-2.5 py-1.5 shadow-xl"
+        >
+          <div className="flex items-center gap-1 pr-1.5 border-r border-slate-200">
+            {ANNOTATION_COLORS.map((c) => (
+              <button
+                key={c.id}
+                type="button"
+                title={`改为${c.label}色`}
+                onClick={() => void onUpdateAnnotationColor(popoverAnnotation.id, c.id)}
+                style={{ backgroundColor: c.swatch }}
+                className="w-5 h-5 rounded-full ring-1 ring-black/10 hover:scale-110 transition flex items-center justify-center"
+              >
+                {popoverAnnotation.color === c.id && (
+                  <Check className="w-3 h-3 text-slate-900/80 stroke-[2.5]" />
+                )}
+              </button>
+            ))}
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              const id = popoverAnnotation.id;
+              setPopover(null);
+              void onDeleteAnnotation(id);
+            }}
+            className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium text-red-600 hover:bg-red-50 transition"
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+            删除
+          </button>
+        </div>
+      )}
     </main>
   );
 }

@@ -1,11 +1,15 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import type {
+  Annotation,
+  AnnotationColor,
   Folder,
   ImportPdfItemResult,
   LibraryOverview,
   LibraryView,
+  NormalizedRect,
   Paper,
   PaperStatus,
+  UpdateAnnotationInput,
   UpdatePaperMetadataInput,
 } from '../shared/types';
 import { extractPdfMetadata } from './lib/pdf';
@@ -19,6 +23,16 @@ import {
   ToastContainer,
   type ToastMessage,
 } from './components/Modals';
+
+function sortAnnotations(items: Annotation[]): Annotation[] {
+  return [...items].sort((a, b) => {
+    if (a.pageNumber !== b.pageNumber) return a.pageNumber - b.pageNumber;
+    const ay = a.rects[0]?.y ?? 0;
+    const by = b.rects[0]?.y ?? 0;
+    if (ay !== by) return ay - by;
+    return a.createdAt - b.createdAt;
+  });
+}
 
 export function App() {
   const [dataDir, setDataDir] = useState('');
@@ -40,6 +54,18 @@ export function App() {
   const [selectedPaperId, setSelectedPaperId] = useState<string | null>(null);
   const [leftCollapsed, setLeftCollapsed] = useState(false);
   const [rightCollapsed, setRightCollapsed] = useState(false);
+
+  // M2 Annotation state
+  const [annotations, setAnnotations] = useState<Annotation[]>([]);
+  const [activeColor, setActiveColor] = useState<AnnotationColor>('yellow');
+  const [rightTab, setRightTab] = useState<'annotations' | 'notes'>('annotations');
+  const [selectedAnnotationId, setSelectedAnnotationId] = useState<string | null>(null);
+  const [cardRevealRequest, setCardRevealRequest] = useState<{
+    id: string;
+    focusComment: boolean;
+    nonce: number;
+  } | null>(null);
+  const [jumpRequest, setJumpRequest] = useState<{ annotation: Annotation; nonce: number } | null>(null);
 
   const [editingPaper, setEditingPaper] = useState<Paper | null>(null);
   const [confirmDeleteFolder, setConfirmDeleteFolder] = useState<Folder | null>(null);
@@ -98,6 +124,24 @@ export function App() {
     [papers, selectedPaperId],
   );
 
+  // Load annotations whenever selectedPaperId changes
+  useEffect(() => {
+    setSelectedAnnotationId(null);
+    setCardRevealRequest(null);
+    setJumpRequest(null);
+    if (!selectedPaperId) {
+      setAnnotations([]);
+      return;
+    }
+    let cancelled = false;
+    void window.foxreader.listAnnotations(selectedPaperId).then((items) => {
+      if (!cancelled) setAnnotations(items);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedPaperId]);
+
   const handleImportResults = useCallback(
     async (results: ImportPdfItemResult[]) => {
       if (results.length === 0) return;
@@ -111,7 +155,6 @@ export function App() {
         if (item.status === 'imported' && item.paper) {
           importedCount += 1;
           if (!firstImportedPaper) firstImportedPaper = item.paper;
-          // Non-blocking extraction of PDF internal title / author / pageCount
           const targetId = item.paper.id;
           const targetSha = item.paper.sha256;
           void extractPdfMetadata(targetSha).then(async (meta) => {
@@ -258,6 +301,106 @@ export function App() {
     pushToast('success', `数据目录已切换至：${updated.dataDir}`);
   };
 
+  // M2 Annotation Handlers
+  const handleCreateTextAnnotation = useCallback(
+    async (payload: {
+      pageNumber: number;
+      rects: NormalizedRect[];
+      quoteText: string;
+      color: AnnotationColor;
+      focusComment: boolean;
+    }) => {
+      if (!selectedPaperId) return;
+      const created = await window.foxreader.createAnnotation({
+        paperId: selectedPaperId,
+        type: 'text',
+        pageNumber: payload.pageNumber,
+        rects: payload.rects,
+        color: payload.color,
+        quoteText: payload.quoteText,
+      });
+      setActiveColor(payload.color);
+      setAnnotations((prev) => sortAnnotations([...prev, created]));
+      setSelectedAnnotationId(created.id);
+      if (payload.focusComment) {
+        setRightCollapsed(false);
+        setRightTab('annotations');
+        setCardRevealRequest({ id: created.id, focusComment: true, nonce: Date.now() });
+      }
+    },
+    [selectedPaperId],
+  );
+
+  const handleCreateAreaAnnotation = useCallback(
+    async (payload: {
+      pageNumber: number;
+      rects: NormalizedRect[];
+      snapshotPngBase64: string;
+    }) => {
+      if (!selectedPaperId) return;
+      const created = await window.foxreader.createAnnotation({
+        paperId: selectedPaperId,
+        type: 'area',
+        pageNumber: payload.pageNumber,
+        rects: payload.rects,
+        color: activeColor,
+        snapshotPngBase64: payload.snapshotPngBase64,
+      });
+      setAnnotations((prev) => sortAnnotations([...prev, created]));
+      setSelectedAnnotationId(created.id);
+      setRightCollapsed(false);
+      setRightTab('annotations');
+      setCardRevealRequest({ id: created.id, focusComment: true, nonce: Date.now() });
+      pushToast('success', `已截取第 ${payload.pageNumber} 页区域截图`);
+    },
+    [selectedPaperId, activeColor, pushToast],
+  );
+
+  const handleUpdateAnnotation = useCallback(async (id: string, input: UpdateAnnotationInput) => {
+    const updated = await window.foxreader.updateAnnotation(id, input);
+    if (input.color) setActiveColor(input.color);
+    setAnnotations((prev) => sortAnnotations(prev.map((a) => (a.id === id ? updated : a))));
+  }, []);
+
+  const handleUpdateAnnotationColor = useCallback(
+    async (id: string, color: AnnotationColor) => {
+      await handleUpdateAnnotation(id, { color });
+    },
+    [handleUpdateAnnotation],
+  );
+
+  const handleDeleteAnnotation = useCallback(
+    async (id: string) => {
+      await window.foxreader.deleteAnnotation(id);
+      setAnnotations((prev) => prev.filter((a) => a.id !== id));
+      setSelectedAnnotationId((curr) => (curr === id ? null : curr));
+      pushToast('info', '已删除批注');
+    },
+    [pushToast],
+  );
+
+  const handleSelectAnnotationFromPdf = useCallback((annotation: Annotation) => {
+    setSelectedAnnotationId(annotation.id);
+    setRightCollapsed(false);
+    setRightTab('annotations');
+    setCardRevealRequest({ id: annotation.id, focusComment: false, nonce: Date.now() });
+  }, []);
+
+  const handleJumpToAnnotation = useCallback((annotation: Annotation) => {
+    setSelectedAnnotationId(annotation.id);
+    setJumpRequest({ annotation, nonce: Date.now() });
+  }, []);
+
+  const handleCopyText = useCallback(
+    (text: string) => {
+      void navigator.clipboard.writeText(text).then(
+        () => pushToast('success', '已复制摘录文本'),
+        () => pushToast('error', '复制失败'),
+      );
+    },
+    [pushToast],
+  );
+
   // Window-wide external PDF drag-and-drop
   const handleWindowDragOver = (e: React.DragEvent) => {
     if (e.dataTransfer.types.includes('Files')) {
@@ -322,6 +465,10 @@ export function App() {
 
       <PdfReader
         paper={selectedPaper}
+        annotations={annotations}
+        activeColor={activeColor}
+        selectedAnnotationId={selectedAnnotationId}
+        jumpRequest={jumpRequest}
         leftCollapsed={leftCollapsed}
         rightCollapsed={rightCollapsed}
         onToggleLeft={() => setLeftCollapsed((p) => !p)}
@@ -329,13 +476,32 @@ export function App() {
         onSaveProgress={handleSaveProgress}
         onSyncPageCount={handleSyncPageCount}
         onPickAndImport={() => void handlePickAndImport(activeView === 'folder' ? activeFolderId : null)}
+        onCreateTextAnnotation={handleCreateTextAnnotation}
+        onCreateAreaAnnotation={handleCreateAreaAnnotation}
+        onUpdateAnnotationColor={handleUpdateAnnotationColor}
+        onDeleteAnnotation={handleDeleteAnnotation}
+        onSelectAnnotationFromPdf={handleSelectAnnotationFromPdf}
+        onCopyText={handleCopyText}
       />
 
-      {!rightCollapsed && <RightSidebar selectedPaper={selectedPaper} />}
+      {!rightCollapsed && (
+        <RightSidebar
+          selectedPaper={selectedPaper}
+          annotations={annotations}
+          activeTab={rightTab}
+          selectedAnnotationId={selectedAnnotationId}
+          cardRevealRequest={cardRevealRequest}
+          onChangeTab={setRightTab}
+          onJumpToAnnotation={handleJumpToAnnotation}
+          onUpdateAnnotation={handleUpdateAnnotation}
+          onDeleteAnnotation={handleDeleteAnnotation}
+          onCopyText={handleCopyText}
+        />
+      )}
 
       {windowFileDragOver && (
-        <div className="pointer-events-none fixed inset-0 z-40 bg-amber-500/10 border-4 border-dashed border-amber-500 flex items-center justify-center">
-          <div className="rounded-xl bg-white px-6 py-4 shadow-xl border border-amber-200 text-sm font-semibold text-amber-900">
+        <div className="pointer-events-none fixed inset-0 z-40 bg-violet-500/10 border-4 border-dashed border-violet-500 flex items-center justify-center">
+          <div className="rounded-xl bg-white px-6 py-4 shadow-xl border border-violet-200 text-sm font-semibold text-violet-900">
             松开鼠标即可导入 PDF 论文
           </div>
         </div>

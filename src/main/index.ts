@@ -5,7 +5,12 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { app, BrowserWindow, dialog, ipcMain, net, protocol, shell } from 'electron';
 import { FoxReaderDatabase } from './database.js';
 import { SettingsManager } from './settings.js';
-import type { PaperListQuery, UpdatePaperMetadataInput } from '../shared/types.js';
+import type {
+  CreateAnnotationInput,
+  PaperListQuery,
+  UpdateAnnotationInput,
+  UpdatePaperMetadataInput,
+} from '../shared/types.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -63,22 +68,39 @@ function registerFoxPdfProtocol(): void {
   protocol.handle('foxpdf', (request) => {
     try {
       const parsed = new URL(request.url);
-      if (parsed.hostname !== 'paper') {
-        return new Response('Forbidden', { status: 403 });
-      }
       const fileName = decodeURIComponent(parsed.pathname.replace(/^\/+/, ''));
-      if (!/^[a-f0-9]{64}\.pdf$/i.test(fileName)) {
-        return new Response('Invalid PDF identifier', { status: 400 });
+
+      if (parsed.hostname === 'paper') {
+        if (!/^[a-f0-9]{64}\.pdf$/i.test(fileName)) {
+          return new Response('Invalid PDF identifier', { status: 400 });
+        }
+        const pdfsRoot = path.resolve(settingsManager.getDataDir(), 'pdfs');
+        const targetPath = path.resolve(pdfsRoot, fileName);
+        if (!targetPath.startsWith(pdfsRoot + path.sep)) {
+          return new Response('Forbidden', { status: 403 });
+        }
+        if (!fs.existsSync(targetPath)) {
+          return new Response('PDF not found', { status: 404 });
+        }
+        return net.fetch(pathToFileURL(targetPath).toString());
       }
-      const pdfsRoot = path.resolve(settingsManager.getDataDir(), 'pdfs');
-      const targetPath = path.resolve(pdfsRoot, fileName);
-      if (!targetPath.startsWith(pdfsRoot + path.sep)) {
-        return new Response('Forbidden', { status: 403 });
+
+      if (parsed.hostname === 'snapshot') {
+        if (!/^[a-f0-9-]{36}\.png$/i.test(fileName)) {
+          return new Response('Invalid snapshot identifier', { status: 400 });
+        }
+        const snapshotsRoot = path.resolve(settingsManager.getDataDir(), 'snapshots');
+        const targetPath = path.resolve(snapshotsRoot, fileName);
+        if (!targetPath.startsWith(snapshotsRoot + path.sep)) {
+          return new Response('Forbidden', { status: 403 });
+        }
+        if (!fs.existsSync(targetPath)) {
+          return new Response('Snapshot not found', { status: 404 });
+        }
+        return net.fetch(pathToFileURL(targetPath).toString());
       }
-      if (!fs.existsSync(targetPath)) {
-        return new Response('PDF not found', { status: 404 });
-      }
-      return net.fetch(pathToFileURL(targetPath).toString());
+
+      return new Response('Forbidden', { status: 403 });
     } catch {
       return new Response('Bad request', { status: 400 });
     }
@@ -172,6 +194,20 @@ function registerIpcHandlers(): void {
   ipcMain.handle('papers:delete', async (_event, paperId: string) => {
     await database.deletePaper(paperId, settingsManager.getDataDir());
   });
+
+  ipcMain.handle('annotations:list', (_event, paperId: string) => database.listAnnotations(paperId));
+
+  ipcMain.handle('annotations:create', (_event, input: CreateAnnotationInput) =>
+    database.createAnnotation(input, settingsManager.getDataDir()),
+  );
+
+  ipcMain.handle('annotations:update', (_event, id: string, input: UpdateAnnotationInput) =>
+    database.updateAnnotation(id, input),
+  );
+
+  ipcMain.handle('annotations:delete', (_event, id: string) =>
+    database.deleteAnnotation(id, settingsManager.getDataDir()),
+  );
 }
 
 app.whenReady().then(() => {

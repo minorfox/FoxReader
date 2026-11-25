@@ -101,7 +101,7 @@ export function ConfirmModal({
             type="button"
             onClick={onConfirm}
             className={`px-3.5 py-1.5 rounded-lg text-xs font-medium text-white transition ${
-              danger ? 'bg-red-600 hover:bg-red-700' : 'bg-amber-600 hover:bg-amber-700'
+              danger ? 'bg-red-600 hover:bg-red-700' : 'bg-violet-600 hover:bg-violet-700'
             }`}
           >
             {confirmLabel}
@@ -184,7 +184,7 @@ export function MetadataModal({
               required
               value={title}
               onChange={(e) => setTitle(e.target.value)}
-              className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/30 focus:border-amber-500"
+              className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500/30 focus:border-violet-500"
             />
           </div>
 
@@ -196,7 +196,7 @@ export function MetadataModal({
                 placeholder="例如：Vaswani et al."
                 value={authors}
                 onChange={(e) => setAuthors(e.target.value)}
-                className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/30 focus:border-amber-500"
+                className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500/30 focus:border-violet-500"
               />
             </div>
             <div>
@@ -208,7 +208,7 @@ export function MetadataModal({
                 placeholder="2024"
                 value={year}
                 onChange={(e) => setYear(e.target.value)}
-                className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/30 focus:border-amber-500"
+                className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500/30 focus:border-violet-500"
               />
             </div>
           </div>
@@ -219,7 +219,7 @@ export function MetadataModal({
               <select
                 value={status}
                 onChange={(e) => setStatus(e.target.value as PaperStatus)}
-                className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-amber-500/30 focus:border-amber-500"
+                className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-violet-500/30 focus:border-violet-500"
               >
                 <option value="unread">未读</option>
                 <option value="reading">在读</option>
@@ -231,7 +231,7 @@ export function MetadataModal({
               <select
                 value={folderId}
                 onChange={(e) => setFolderId(e.target.value)}
-                className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-amber-500/30 focus:border-amber-500"
+                className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-violet-500/30 focus:border-violet-500"
               >
                 <option value="">未分类</option>
                 {folders.map((f) => (
@@ -260,7 +260,7 @@ export function MetadataModal({
           <button
             type="submit"
             disabled={saving}
-            className="px-4 py-1.5 rounded-lg text-xs font-medium text-white bg-amber-600 hover:bg-amber-700 disabled:opacity-60 transition"
+            className="px-4 py-1.5 rounded-lg text-xs font-medium text-white bg-violet-600 hover:bg-violet-700 disabled:opacity-60 transition"
           >
             {saving ? '保存中...' : '保存'}
           </button>
@@ -299,9 +299,9 @@ export function SettingsModal({
         </div>
         <div className="p-5 space-y-4 text-sm">
           <p className="text-xs text-slate-600 leading-relaxed">
-            FoxReader 将数据库（<code className="text-amber-700">library.db</code>）、只读 PDF 副本（
-            <code className="text-amber-700">pdfs/</code>）与区域截图（
-            <code className="text-amber-700">snapshots/</code>）集中保存在下方目录中，可随时放入网盘或 Git 仓库备份同步。
+            FoxReader 将数据库（<code className="text-violet-700">library.db</code>）、只读 PDF 副本（
+            <code className="text-violet-700">pdfs/</code>）与区域截图（
+            <code className="text-violet-700">snapshots/</code>）集中保存在下方目录中，可随时放入网盘或 Git 仓库备份同步。
           </p>
           <div>
             <label className="block text-xs font-medium text-slate-600 mb-1.5">当前数据目录</label>
@@ -321,7 +321,7 @@ export function SettingsModal({
             <button
               type="button"
               onClick={() => void onSelectDataDir()}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-600 text-xs font-medium text-white hover:bg-amber-700 transition"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-violet-600 text-xs font-medium text-white hover:bg-violet-700 transition"
             >
               切换 / 指向已有 FoxReaderData 目录
             </button>

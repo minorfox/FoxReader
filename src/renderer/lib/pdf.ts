@@ -11,6 +11,10 @@ export function getPaperPdfUrl(sha256: string): string {
   return `foxpdf://paper/${sha256}.pdf`;
 }
 
+export function getSnapshotUrl(snapshotPath: string): string {
+  return `foxpdf://snapshot/${snapshotPath}`;
+}
+
 export interface ExtractedPdfInfo {
   pageCount: number;
   title?: string;

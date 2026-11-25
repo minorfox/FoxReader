@@ -1,5 +1,11 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
-import type { FoxReaderApi, PaperListQuery, UpdatePaperMetadataInput } from '../shared/types.js';
+import type {
+  CreateAnnotationInput,
+  FoxReaderApi,
+  PaperListQuery,
+  UpdateAnnotationInput,
+  UpdatePaperMetadataInput,
+} from '../shared/types.js';
 
 const api: FoxReaderApi = {
   getSettings: () => ipcRenderer.invoke('app:getSettings'),
@@ -22,6 +28,12 @@ const api: FoxReaderApi = {
   updatePaperProgress: (paperId: string, lastPage: number, lastZoom: number) =>
     ipcRenderer.invoke('papers:updateProgress', paperId, lastPage, lastZoom),
   deletePaper: (paperId: string) => ipcRenderer.invoke('papers:delete', paperId),
+  listAnnotations: (paperId: string) => ipcRenderer.invoke('annotations:list', paperId),
+  createAnnotation: (input: CreateAnnotationInput) =>
+    ipcRenderer.invoke('annotations:create', input),
+  updateAnnotation: (id: string, input: UpdateAnnotationInput) =>
+    ipcRenderer.invoke('annotations:update', id, input),
+  deleteAnnotation: (id: string) => ipcRenderer.invoke('annotations:delete', id),
   getPathForFile: (file: File) => webUtils.getPathForFile(file),
 };
 

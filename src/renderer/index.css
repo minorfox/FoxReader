@@ -69,11 +69,24 @@
 }
 
 .textLayer ::selection {
-  background: rgba(245, 158, 11, 0.32);
+  background: rgba(139, 92, 246, 0.28);
 }
 
 .textLayer br::selection {
   background: transparent;
+}
+
+@keyframes fox-annotation-pulse {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(124, 58, 237, 0);
+  }
+  25%, 65% {
+    box-shadow: 0 0 0 4px rgba(124, 58, 237, 0.55);
+  }
+}
+
+.fox-annotation-pulse {
+  animation: fox-annotation-pulse 1.5s ease-in-out 1;
 }
 
 .textLayer .endOfContent {

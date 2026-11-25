@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (M2)
+
+- Two-column PDF `Range.getClientRects()` cleaning & normalization (`[0, 1]`) for accurate text highlights (`src/renderer/lib/selection.ts`).
+- 5-color text highlight floating bar (`yellow`, `green`, `blue`, `pink`, `purple`), "Highlight & Comment", and copy actions.
+- Area box selection mode & `Alt + Drag` shortcut cropping rendered HiDPI canvas regions into `FoxReaderData/snapshots/<id>.png`.
+- Right sidebar "批注与备注" tab with page/y-sorted cards, color/content filters, inline 500ms debounced comments, and color editing.
+- Bidirectional navigation: click PDF highlight/area to open popover & highlight right card; click right card to smoothly scroll & pulse PDF highlight.
+- Switched UI brand and interactive theme accents from amber to purple (`violet-*`).
+
 ### Added (M1)
 
 - Electron + React + TypeScript + Vite + Tailwind CSS desktop application scaffold with zero-native-build SQLite persistence (`node:sqlite` + WAL + FTS5).

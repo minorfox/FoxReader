@@ -81,10 +81,89 @@ async function main() {
     assert.equal(withProgress.lastPage, 7);
     assert.equal(withProgress.lastZoom, 1.25);
 
-    // 6. Delete paper -> DB row + managed PDF deleted
+    // 6. Annotations CRUD (text + area snapshot, sorting, FTS5 search, cleanup)
+    const samplePngBase64 =
+      'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=';
+
+    const annPage3 = await db.createAnnotation(
+      {
+        paperId: reloadedPaper.id,
+        type: 'text',
+        pageNumber: 3,
+        rects: [{ x: 0.1, y: 0.2, w: 0.3, h: 0.03 }],
+        color: 'yellow',
+        quoteText: 'Scaled Dot-Product Attention',
+      },
+      dataDir,
+    );
+
+    const annArea1 = await db.createAnnotation(
+      {
+        paperId: reloadedPaper.id,
+        type: 'area',
+        pageNumber: 1,
+        rects: [{ x: 0.15, y: 0.45, w: 0.4, h: 0.2 }],
+        color: 'blue',
+        snapshotPngBase64: samplePngBase64,
+      },
+      dataDir,
+    );
+
+    const annText1Top = await db.createAnnotation(
+      {
+        paperId: reloadedPaper.id,
+        type: 'text',
+        pageNumber: 1,
+        rects: [{ x: 0.1, y: 0.12, w: 0.3, h: 0.025 }],
+        color: 'purple',
+        quoteText: 'Transformer architecture',
+      },
+      dataDir,
+    );
+
+    const annArea2 = await db.createAnnotation(
+      {
+        paperId: reloadedPaper.id,
+        type: 'area',
+        pageNumber: 2,
+        rects: [{ x: 0.2, y: 0.3, w: 0.5, h: 0.25 }],
+        color: 'pink',
+        snapshotPngBase64: samplePngBase64,
+      },
+      dataDir,
+    );
+
+    const snap1Path = path.join(dataDir, 'snapshots', annArea1.snapshotPath);
+    const snap2Path = path.join(dataDir, 'snapshots', annArea2.snapshotPath);
+    assert.equal(fs.existsSync(snap1Path), true, 'Area snapshot 1 PNG should be written');
+    assert.equal(fs.existsSync(snap2Path), true, 'Area snapshot 2 PNG should be written');
+
+    const sorted = db.listAnnotations(reloadedPaper.id);
+    assert.deepEqual(
+      sorted.map((a) => a.id),
+      [annText1Top.id, annArea1.id, annArea2.id, annPage3.id],
+      'Annotations should sort by pageNumber ASC, then y ASC',
+    );
+
+    const updatedAnn = db.updateAnnotation(annPage3.id, {
+      color: 'green',
+      comment: 'Bifocal prototype intuition',
+    });
+    assert.equal(updatedAnn.color, 'green');
+    assert.equal(updatedAnn.comment, 'Bifocal prototype intuition');
+
+    const commentSearchHits = db.listPapers({ view: 'all', search: 'Bifocal' });
+    assert.equal(commentSearchHits.length, 1, 'Paper should match annotation comment via FTS5');
+
+    await db.deleteAnnotation(annArea1.id, dataDir);
+    assert.equal(fs.existsSync(snap1Path), false, 'Deleted annotation snapshot PNG should be removed');
+    assert.equal(db.listAnnotations(reloadedPaper.id).length, 3);
+
+    // 7. Delete paper -> DB row + managed PDF + remaining annotation snapshots deleted
     await db.deletePaper(reloadedPaper.id, dataDir);
     assert.equal(db.getPaperById(reloadedPaper.id), null);
     assert.equal(fs.existsSync(managedPdfPath), false, 'Managed PDF should be deleted after deletePaper');
+    assert.equal(fs.existsSync(snap2Path), false, 'Remaining annotation snapshot PNG should be deleted on deletePaper');
 
     db.close();
     console.log('ALL_DB_TESTS_PASSED');

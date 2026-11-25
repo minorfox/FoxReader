@@ -10,7 +10,8 @@
     "dev": "node scripts/dev.mjs",
     "build": "node scripts/build-electron.mjs && vite build",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.node.json --noEmit",
-    "test:db": "node scripts/run-db-test.mjs"
+    "test:db": "node scripts/run-db-test.mjs",
+    "test:selection": "node scripts/test-selection.mjs"
   },
   "dependencies": {
     "lucide-react": "^0.511.0",
