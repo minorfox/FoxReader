@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { PDFDocumentProxy, RenderTask } from 'pdfjs-dist';
 import { pdfjsLib } from '../lib/pdf';
 
@@ -26,6 +26,7 @@ export function PdfPageCanvas({
   const containerRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const textLayerRef = useRef<HTMLDivElement | null>(null);
+  const [renderError, setRenderError] = useState<string | null>(null);
 
   const displayWidth = Math.max(1, Math.round(baseWidth * zoom));
   const displayHeight = Math.max(1, Math.round(baseHeight * zoom));
@@ -45,12 +46,14 @@ export function PdfPageCanvas({
       canvas.width = 0;
       canvas.height = 0;
       textLayerEl.innerHTML = '';
+      setRenderError(null);
       return;
     }
 
     let cancelled = false;
     let renderTask: RenderTask | null = null;
     let textLayerInstance: InstanceType<typeof pdfjsLib.TextLayer> | null = null;
+    setRenderError(null);
 
     async function renderPage() {
       try {
@@ -92,6 +95,9 @@ export function PdfPageCanvas({
         const name = err instanceof Error ? err.name : '';
         if (name !== 'RenderingCancelledException' && name !== 'AbortException') {
           console.error(`[FoxReader] Failed to render page ${pageNumber}:`, err);
+          if (!cancelled) {
+            setRenderError(err instanceof Error ? err.message : String(err));
+          }
         }
       }
     }
@@ -117,6 +123,11 @@ export function PdfPageCanvas({
         ref={textLayerRef}
         className={`textLayer ${selectionEnabled ? '' : 'pointer-events-none'}`}
       />
+      {renderError && (
+        <div className="absolute inset-x-4 top-4 z-10 rounded-lg border border-red-200 bg-red-50/95 px-3 py-2 text-xs text-red-700 shadow-sm">
+          第 {pageNumber} 页渲染失败：{renderError}
+        </div>
+      )}
       {!shouldRender && (
         <div className="absolute inset-0 flex items-center justify-center text-xs text-slate-300 pointer-events-none">
           第 {pageNumber} 页
