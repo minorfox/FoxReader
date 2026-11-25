@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-11-25
+
 ### Added
 
 - Automatic reading status progression (`未读` -> `在读` on open, `在读` -> `已读` when reaching the final PDF page) plus 1-click status cycling on left sidebar cards and reader top toolbars.
