@@ -59,15 +59,73 @@ jobs:
           fi
           cat "SHA256SUMS-${{ matrix.platform }}.txt"
 
-      - name: Upload release assets
-        if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v2
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
         with:
-          generate_release_notes: true
-          files: |
+          name: dist-${{ matrix.platform }}
+          path: |
             release/*.exe
             release/*.dmg
             release/*.zip
             release/SHA256SUMS-*.txt
+          if-no-files-found: error
+
+  publish:
+    name: Publish GitHub Release
+    runs-on: ubuntu-latest
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+
+    steps:
+      - name: Download all platform artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist-all
+          merge-multiple: true
+
+      - name: Combine checksums & generate release body
+        shell: bash
+        run: |
+          cd dist-all
+          cat SHA256SUMS-win.txt SHA256SUMS-mac.txt > SHA256SUMS.txt
+          rm -f SHA256SUMS-win.txt SHA256SUMS-mac.txt
+          ls -lh
+          node -e '
+            const fs = require("fs");
+            const tag = process.env.GITHUB_REF_NAME;
+            const ver = tag.replace(/^v/, "");
+            const md = [
+              `## 按系统选择下载（FoxReader ${tag}）`,
+              "",
+              "请在下方 **Assets** 中按你的操作系统下载对应文件：",
+              "",
+              "| 平台 | 推荐文件 | 说明 |",
+              "| :--- | :--- | :--- |",
+              `| **Windows (x64 安装版)** | \`FoxReader.Setup.${ver}.exe\` | 常规安装向导，自动创建桌面快捷方式 |`,
+              `| **Windows (x64 绿色便携版)** | \`FoxReader.${ver}.exe\` | 免安装单文件，双击即用 |`,
+              `| **macOS (Apple Silicon M1/M2/M3/M4)** | \`FoxReader-${ver}-arm64.dmg\` | 绝大多数新款 Mac 选择此版本 |`,
+              `| **macOS (Intel 芯片)** | \`FoxReader-${ver}.dmg\` | 老款 Intel Mac 选择此版本 |`,
+              "| **校验文件** | `SHA256SUMS.txt` | 所有安装包的 SHA-256 校验值 |",
+              "",
+              "### 首次打开提示说明",
+              "- **Windows**：个人开源项目未购买商业代码签名证书，若弹出「Windows 已保护你的电脑（SmartScreen）」，点击 **「更多信息 → 仍要运行」** 即可。",
+              "- **macOS**：若提示「已损坏」或「无法验证开发者」，在终端执行 `xattr -cr /Applications/FoxReader.app` 后即可正常打开。",
+              "- **OneDrive 多机同步**：只需在软件设置中将数据目录指向网盘内的同一个 `FoxReaderData/` 文件夹，并遵循单台退出同步完再开另一台的接力原则。",
+              ""
+            ].join("\n");
+            fs.writeFileSync("../release-body.md", md, "utf-8");
+          '
+
+      - name: Create Release & upload all platform assets
+        uses: softprops/action-gh-release@v2
+        with:
+          name: FoxReader ${{ github.ref_name }}
+          body_path: release-body.md
+          generate_release_notes: true
+          files: |
+            dist-all/*.exe
+            dist-all/*.dmg
+            dist-all/*.zip
+            dist-all/SHA256SUMS.txt
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
