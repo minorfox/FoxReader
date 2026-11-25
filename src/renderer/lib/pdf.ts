@@ -15,6 +15,18 @@ export function getSnapshotUrl(snapshotPath: string): string {
   return `foxpdf://snapshot/${snapshotPath}`;
 }
 
+export function getPdfDocumentOptions(sha256: string) {
+  return {
+    url: getPaperPdfUrl(sha256),
+    cMapUrl: 'foxpdf://assets/cmaps/',
+    cMapPacked: true,
+    standardFontDataUrl: 'foxpdf://assets/standard_fonts/',
+    wasmUrl: 'foxpdf://assets/wasm/',
+    iccUrl: 'foxpdf://assets/iccs/',
+    verbosity: pdfjsLib.VerbosityLevel.ERRORS,
+  };
+}
+
 export interface ExtractedPdfInfo {
   pageCount: number;
   title?: string;
@@ -22,10 +34,7 @@ export interface ExtractedPdfInfo {
 }
 
 export async function extractPdfMetadata(sha256: string): Promise<ExtractedPdfInfo | null> {
-  const loadingTask = pdfjsLib.getDocument({
-    url: getPaperPdfUrl(sha256),
-    verbosity: pdfjsLib.VerbosityLevel.ERRORS,
-  });
+  const loadingTask = pdfjsLib.getDocument(getPdfDocumentOptions(sha256));
 
   try {
     const doc = await loadingTask.promise;

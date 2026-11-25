@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Right sidebar "批注与备注" tab with page/y-sorted cards, color/content filters, inline 500ms debounced comments, and color editing.
 - Bidirectional navigation: click PDF highlight/area to open popover & highlight right card; click right card to smoothly scroll & pulse PDF highlight.
 - Switched UI brand and interactive theme accents from amber to purple (`violet-*`).
+- Added `foxpdf://assets/` protocol serving `pdfjs-dist` CMaps, standard fonts, WASM decoders, and ICC profiles for full CJK/Chinese PDF rendering and text extraction.
 
 ### Added (M1)
 

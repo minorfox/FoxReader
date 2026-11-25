@@ -26,7 +26,7 @@ import {
   type NormalizedRect,
   type Paper,
 } from '../../shared/types';
-import { getPaperPdfUrl, pdfjsLib } from '../lib/pdf';
+import { getPdfDocumentOptions, pdfjsLib } from '../lib/pdf';
 import { extractSelectionForPage } from '../lib/selection';
 import { PdfPageCanvas } from './PdfPageCanvas';
 
@@ -211,10 +211,7 @@ export function PdfReader({
     pendingInitialJumpRef.current = initialPage;
     visibleRatiosRef.current.clear();
 
-    const loadingTask = pdfjsLib.getDocument({
-      url: getPaperPdfUrl(sha),
-      verbosity: pdfjsLib.VerbosityLevel.ERRORS,
-    });
+    const loadingTask = pdfjsLib.getDocument(getPdfDocumentOptions(sha));
 
     let loadedDoc: PDFDocumentProxy | null = null;
 

@@ -64,8 +64,23 @@ function createMainWindow(): BrowserWindow {
   return win;
 }
 
+function getPdfjsDistRoot(): string {
+  const fromApp = path.resolve(app.getAppPath(), 'node_modules', 'pdfjs-dist');
+  if (fs.existsSync(fromApp)) return fromApp;
+  return path.resolve(__dirname, '../../node_modules/pdfjs-dist');
+}
+
+const ALLOWED_PDFJS_BUCKETS = new Set(['cmaps', 'standard_fonts', 'wasm', 'iccs']);
+
+function getAssetContentType(fileName: string): string {
+  const ext = path.extname(fileName).toLowerCase();
+  if (ext === '.wasm') return 'application/wasm';
+  if (ext === '.js' || ext === '.mjs') return 'text/javascript; charset=utf-8';
+  return 'application/octet-stream';
+}
+
 function registerFoxPdfProtocol(): void {
-  protocol.handle('foxpdf', (request) => {
+  protocol.handle('foxpdf', async (request) => {
     try {
       const parsed = new URL(request.url);
       const fileName = decodeURIComponent(parsed.pathname.replace(/^\/+/, ''));
@@ -98,6 +113,30 @@ function registerFoxPdfProtocol(): void {
           return new Response('Snapshot not found', { status: 404 });
         }
         return net.fetch(pathToFileURL(targetPath).toString());
+      }
+
+      if (parsed.hostname === 'assets') {
+        const segments = fileName.split('/').filter(Boolean);
+        if (segments.length !== 2) {
+          return new Response('Invalid asset path', { status: 400 });
+        }
+        const [bucket, assetFile] = segments;
+        if (!ALLOWED_PDFJS_BUCKETS.has(bucket) || !/^[a-zA-Z0-9._-]+$/.test(assetFile)) {
+          return new Response('Invalid asset path', { status: 400 });
+        }
+        const bucketRoot = path.resolve(getPdfjsDistRoot(), bucket);
+        const targetPath = path.resolve(bucketRoot, assetFile);
+        if (!targetPath.startsWith(bucketRoot + path.sep)) {
+          return new Response('Forbidden', { status: 403 });
+        }
+        if (!fs.existsSync(targetPath)) {
+          return new Response('Asset not found', { status: 404 });
+        }
+        const data = await fs.promises.readFile(targetPath);
+        return new Response(new Uint8Array(data), {
+          status: 200,
+          headers: { 'Content-Type': getAssetContentType(assetFile) },
+        });
       }
 
       return new Response('Forbidden', { status: 403 });
