@@ -218,7 +218,94 @@ async function main() {
     assert.equal(fs.existsSync(managedPdfPath), false, 'Managed PDF should be deleted after deletePaper');
     assert.equal(fs.existsSync(snap2Path), false, 'Remaining annotation snapshot PNG should be deleted on deletePaper');
 
+    // 10. Batch delete papers -> removes multiple DB rows & managed PDFs
+    const batchPdfA = path.join(tempRoot, 'batch-a.pdf');
+    const batchPdfB = path.join(tempRoot, 'batch-b.pdf');
+    fs.writeFileSync(batchPdfA, '%PDF-1.4\n% Batch A\n%%EOF\n', 'utf-8');
+    fs.writeFileSync(batchPdfB, '%PDF-1.4\n% Batch B\n%%EOF\n', 'utf-8');
+    const resA = await db.importPdfFile(batchPdfA, null, dataDir);
+    const resB = await db.importPdfFile(batchPdfB, null, dataDir);
+    assert.equal(resA.status, 'imported');
+    assert.equal(resB.status, 'imported');
+    const pathA = path.join(dataDir, 'pdfs', `${resA.paper.sha256}.pdf`);
+    const pathB = path.join(dataDir, 'pdfs', `${resB.paper.sha256}.pdf`);
+    assert.equal(fs.existsSync(pathA), true);
+    assert.equal(fs.existsSync(pathB), true);
+
+    const batchDel = await db.deletePapers([resA.paper.id, resB.paper.id, 'non-existent-id'], dataDir);
+    assert.equal(batchDel.deletedCount, 2);
+    assert.equal(db.getPaperById(resA.paper.id), null);
+    assert.equal(db.getPaperById(resB.paper.id), null);
+    assert.equal(fs.existsSync(pathA), false);
+    assert.equal(fs.existsSync(pathB), false);
+
+    // 11. Affiliations metadata storage + FTS5/CJK search
+    const affPdf = path.join(tempRoot, 'aff-paper.pdf');
+    fs.writeFileSync(affPdf, '%PDF-1.4\n% Aff paper\n%%EOF\n', 'utf-8');
+    const affImport = await db.importPdfFile(affPdf, null, dataDir);
+    assert.equal(affImport.status, 'imported');
+    const updatedAff = db.updatePaperMetadata(affImport.paper.id, {
+      title: 'Federated Spatio-Temporal Graph Modeling',
+      authors: 'Qiang Gao, Fan Zhou',
+      affiliations: 'Southwestern University of Finance and Economics; 清华大学',
+      year: 2025,
+    });
+    assert.equal(updatedAff.affiliations, 'Southwestern University of Finance and Economics; 清华大学');
+    assert.equal(db.listPapers({ view: 'all', search: 'Southwestern' }).length, 1);
+    assert.equal(db.listPapers({ view: 'all', search: '清华大学' }).length, 1);
+
     db.close();
+
+    // 12. Legacy DB schema migration (pre-affiliations library.db -> auto ALTER + search_fts backfill)
+    const { DatabaseSync } = await import('node:sqlite');
+    const legacyDir = path.join(tempRoot, 'LegacyFoxReaderData');
+    fs.mkdirSync(legacyDir, { recursive: true });
+    const legacyDb = new DatabaseSync(path.join(legacyDir, 'library.db'));
+    legacyDb.exec(`
+      CREATE TABLE folders (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        parent_id TEXT NULL,
+        sort_order INTEGER NOT NULL DEFAULT 0,
+        created_at INTEGER NOT NULL
+      );
+      CREATE TABLE papers (
+        id TEXT PRIMARY KEY,
+        sha256 TEXT UNIQUE NOT NULL,
+        title TEXT NOT NULL,
+        authors TEXT NOT NULL DEFAULT '',
+        year INTEGER NULL,
+        folder_id TEXT NULL,
+        status TEXT NOT NULL DEFAULT 'unread',
+        page_count INTEGER NOT NULL DEFAULT 0,
+        last_page INTEGER NOT NULL DEFAULT 1,
+        last_zoom REAL NOT NULL DEFAULT 1.0,
+        file_name TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+      CREATE TABLE tags (id TEXT PRIMARY KEY, name TEXT UNIQUE NOT NULL, color TEXT NOT NULL DEFAULT '');
+      CREATE TABLE paper_tags (paper_id TEXT NOT NULL, tag_id TEXT NOT NULL, PRIMARY KEY (paper_id, tag_id));
+      CREATE TABLE annotations (
+        id TEXT PRIMARY KEY, paper_id TEXT NOT NULL, type TEXT NOT NULL, page_number INTEGER NOT NULL,
+        rects_json TEXT NOT NULL, color TEXT NOT NULL, quote_text TEXT NOT NULL DEFAULT '',
+        snapshot_path TEXT NOT NULL DEFAULT '', comment TEXT NOT NULL DEFAULT '',
+        created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+      );
+      CREATE TABLE paper_notes (paper_id TEXT PRIMARY KEY, content_md TEXT NOT NULL DEFAULT '', updated_at INTEGER NOT NULL);
+      CREATE VIRTUAL TABLE search_fts USING fts5(paper_id UNINDEXED, title, authors, tags, quote_text, comment, content_md);
+      INSERT INTO papers (id, sha256, title, authors, year, status, page_count, last_page, last_zoom, file_name, created_at, updated_at)
+      VALUES ('legacy-1', 'deadbeef01', 'Legacy Quantum Paper', 'Ada Lovelace', 2022, 'unread', 8, 1, 1.0, 'legacy.pdf', 1000, 1000);
+    `);
+    legacyDb.close();
+
+    const migratedDb = new FoxReaderDatabase(legacyDir);
+    const migratedPaper = migratedDb.getPaperById('legacy-1');
+    assert.ok(migratedPaper);
+    assert.equal(migratedPaper.affiliations, '');
+    assert.equal(migratedDb.listPapers({ view: 'all', search: 'Quantum' }).length, 1);
+    migratedDb.close();
+
     console.log('ALL_DB_TESTS_PASSED');
   } finally {
     fs.rmSync(tempRoot, { recursive: true, force: true });

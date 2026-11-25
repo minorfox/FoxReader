@@ -1,11 +1,23 @@
 import React, { useEffect, useState } from 'react';
-import { X, FolderOpen, AlertTriangle, CheckCircle2, Info, Plus, ShieldAlert } from 'lucide-react';
+import {
+  X,
+  FolderOpen,
+  AlertTriangle,
+  CheckCircle2,
+  Info,
+  Plus,
+  ShieldAlert,
+  RefreshCw,
+  ExternalLink,
+  Loader2,
+} from 'lucide-react';
 import type {
   DataDirLockInfo,
   Folder,
   Paper,
   PaperStatus,
   Tag,
+  UpdateCheckResult,
   UpdatePaperMetadataInput,
 } from '../../shared/types';
 
@@ -134,6 +146,7 @@ export function MetadataModal({
 }) {
   const [title, setTitle] = useState('');
   const [authors, setAuthors] = useState('');
+  const [affiliations, setAffiliations] = useState('');
   const [year, setYear] = useState('');
   const [status, setStatus] = useState<PaperStatus>('unread');
   const [folderId, setFolderId] = useState<string>('');
@@ -145,6 +158,7 @@ export function MetadataModal({
     if (!paper) return;
     setTitle(paper.title);
     setAuthors(paper.authors);
+    setAffiliations(paper.affiliations ?? '');
     setYear(paper.year !== null ? String(paper.year) : '');
     setStatus(paper.status);
     setFolderId(paper.folderId ?? '');
@@ -178,6 +192,7 @@ export function MetadataModal({
         {
           title: title.trim() || paper.title,
           authors: authors.trim(),
+          affiliations: affiliations.trim(),
           year: parsedYear !== null && Number.isFinite(parsedYear) ? parsedYear : null,
           status,
           folderId: folderId === '' ? null : folderId,
@@ -224,7 +239,7 @@ export function MetadataModal({
               <label className="block text-xs font-medium text-slate-600 mb-1">作者</label>
               <input
                 type="text"
-                placeholder="例如：Vaswani et al."
+                placeholder="例如：Vaswani, Shazeer"
                 value={authors}
                 onChange={(e) => setAuthors(e.target.value)}
                 className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500/30 focus:border-violet-500"
@@ -242,6 +257,17 @@ export function MetadataModal({
                 className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500/30 focus:border-violet-500"
               />
             </div>
+          </div>
+
+          <div>
+            <label className="block text-xs font-medium text-slate-600 mb-1">作者机构 / 单位</label>
+            <input
+              type="text"
+              placeholder="多个机构请用分号 ; 分隔，例如：Tsinghua University; Peking University"
+              value={affiliations}
+              onChange={(e) => setAffiliations(e.target.value)}
+              className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500/30 focus:border-violet-500"
+            />
           </div>
 
           <div className="grid grid-cols-2 gap-3">
@@ -365,22 +391,49 @@ export function MetadataModal({
 export function SettingsModal({
   open,
   dataDir,
+  appVersion,
   onClose,
   onSelectDataDir,
   onOpenDataDir,
+  onCheckForUpdates,
+  onOpenExternalUrl,
 }: {
   open: boolean;
   dataDir: string;
+  appVersion: string;
   onClose: () => void;
   onSelectDataDir: () => Promise<void>;
   onOpenDataDir: () => Promise<void>;
+  onCheckForUpdates: () => Promise<UpdateCheckResult>;
+  onOpenExternalUrl: (url: string) => Promise<void>;
 }) {
+  const [checkingUpdate, setCheckingUpdate] = useState(false);
+  const [updateResult, setUpdateResult] = useState<UpdateCheckResult | null>(null);
+
+  useEffect(() => {
+    if (!open) {
+      setUpdateResult(null);
+      setCheckingUpdate(false);
+    }
+  }, [open]);
+
   if (!open) return null;
+
+  const handleCheckUpdate = async () => {
+    setCheckingUpdate(true);
+    try {
+      const res = await onCheckForUpdates();
+      setUpdateResult(res);
+    } finally {
+      setCheckingUpdate(false);
+    }
+  };
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-[1px] p-4">
       <div className="w-full max-w-lg rounded-xl bg-white border border-slate-200 shadow-xl overflow-hidden">
         <div className="flex items-center justify-between px-5 py-3.5 border-b border-slate-100">
-          <h3 className="font-semibold text-slate-900 text-sm">本地数据目录设置</h3>
+          <h3 className="font-semibold text-slate-900 text-sm">应用设置</h3>
           <button
             type="button"
             onClick={onClose}
@@ -389,34 +442,102 @@ export function SettingsModal({
             <X className="w-4 h-4" />
           </button>
         </div>
-        <div className="p-5 space-y-4 text-sm">
-          <p className="text-xs text-slate-600 leading-relaxed">
-            FoxReader 将数据库（<code className="text-violet-700">library.db</code>）、只读 PDF 副本（
-            <code className="text-violet-700">pdfs/</code>）与区域截图（
-            <code className="text-violet-700">snapshots/</code>）集中保存在下方目录中。若需多机通过 OneDrive / 坚果云同步，仅需将此目录放入网盘，并确保单台设备退出且同步完成后再在另一台设备打开。
-          </p>
-          <div>
-            <label className="block text-xs font-medium text-slate-600 mb-1.5">当前数据目录</label>
-            <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 font-mono text-xs text-slate-700 break-all">
-              {dataDir}
+        <div className="p-5 space-y-5 text-sm">
+          <div className="space-y-3">
+            <p className="text-xs text-slate-600 leading-relaxed">
+              FoxReader 将数据库（<code className="text-violet-700">library.db</code>）、只读 PDF 副本（
+              <code className="text-violet-700">pdfs/</code>）与区域截图（
+              <code className="text-violet-700">snapshots/</code>）集中保存在下方目录中。若需多机通过 OneDrive / 坚果云同步，仅需将此目录放入网盘，并确保单台设备退出且同步完成后再在另一台设备打开。
+            </p>
+            <div>
+              <label className="block text-xs font-medium text-slate-600 mb-1.5">当前数据目录</label>
+              <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 font-mono text-xs text-slate-700 break-all">
+                {dataDir}
+              </div>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => void onOpenDataDir()}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 text-xs font-medium text-slate-700 hover:bg-slate-50 transition"
+              >
+                <FolderOpen className="w-3.5 h-3.5" />
+                在文件管理器中打开
+              </button>
+              <button
+                type="button"
+                onClick={() => void onSelectDataDir()}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-violet-600 text-xs font-medium text-white hover:bg-violet-700 transition"
+              >
+                切换 / 指向已有 FoxReaderData 目录
+              </button>
             </div>
           </div>
-          <div className="flex flex-wrap gap-2">
-            <button
-              type="button"
-              onClick={() => void onOpenDataDir()}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 text-xs font-medium text-slate-700 hover:bg-slate-50 transition"
-            >
-              <FolderOpen className="w-3.5 h-3.5" />
-              在文件管理器中打开
-            </button>
-            <button
-              type="button"
-              onClick={() => void onSelectDataDir()}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-violet-600 text-xs font-medium text-white hover:bg-violet-700 transition"
-            >
-              切换 / 指向已有 FoxReaderData 目录
-            </button>
+
+          <div className="pt-4 border-t border-slate-100 space-y-2.5">
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-medium text-slate-700">版本与更新</span>
+                <span className="rounded-full bg-slate-100 px-2 py-0.5 font-mono text-[11px] text-slate-600">
+                  v{appVersion}
+                </span>
+              </div>
+              <button
+                type="button"
+                disabled={checkingUpdate}
+                onClick={() => void handleCheckUpdate()}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 text-xs font-medium text-slate-700 hover:border-violet-300 hover:text-violet-700 disabled:opacity-60 transition"
+              >
+                {checkingUpdate ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <RefreshCw className="w-3.5 h-3.5" />
+                )}
+                {checkingUpdate ? '正在检查...' : '检查更新'}
+              </button>
+            </div>
+
+            {updateResult && (
+              <div
+                className={`rounded-lg border px-3 py-2.5 text-xs ${
+                  updateResult.error
+                    ? 'bg-amber-50 border-amber-200 text-amber-800'
+                    : updateResult.hasUpdate
+                      ? 'bg-violet-50 border-violet-200 text-violet-900'
+                      : 'bg-emerald-50 border-emerald-200 text-emerald-800'
+                }`}
+              >
+                {updateResult.error ? (
+                  <div className="flex items-center justify-between gap-2">
+                    <span>{updateResult.error}</span>
+                    <button
+                      type="button"
+                      onClick={() => void onOpenExternalUrl(updateResult.releaseUrl)}
+                      className="inline-flex items-center gap-1 underline shrink-0"
+                    >
+                      打开发布页
+                      <ExternalLink className="w-3 h-3" />
+                    </button>
+                  </div>
+                ) : updateResult.hasUpdate ? (
+                  <div className="flex items-center justify-between gap-2">
+                    <span>
+                      发现新版本 <strong>v{updateResult.latestVersion}</strong>（当前 v{updateResult.currentVersion}）
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => void onOpenExternalUrl(updateResult.releaseUrl)}
+                      className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-violet-600 text-white font-medium hover:bg-violet-700 shrink-0 transition"
+                    >
+                      前往下载
+                      <ExternalLink className="w-3 h-3" />
+                    </button>
+                  </div>
+                ) : (
+                  <div>当前已是最新版本 v{updateResult.currentVersion}。</div>
+                )}
+              </div>
+            )}
           </div>
         </div>
         <div className="flex justify-end px-5 py-3 bg-slate-50 border-t border-slate-100">

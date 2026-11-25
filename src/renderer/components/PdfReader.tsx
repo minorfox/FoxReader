@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
 import {
+  ArrowUpDown,
   BookOpenCheck,
   Check,
   ChevronDown,
@@ -10,6 +11,7 @@ import {
   Copy,
   FileUp,
   Highlighter,
+  Loader2,
   Maximize2,
   MessageSquarePlus,
   PanelLeftClose,
@@ -29,6 +31,7 @@ import {
   type AnnotationColor,
   type NormalizedRect,
   type Paper,
+  type TranslateTextResult,
 } from '../../shared/types';
 import { getPdfDocumentOptions, pdfjsLib } from '../lib/pdf';
 import { extractSelectionForPage } from '../lib/selection';
@@ -44,6 +47,12 @@ interface TextSelectionPrompt {
   rects: NormalizedRect[];
   quoteText: string;
   anchor: { clientX: number; clientY: number };
+}
+
+interface TranslationCardState {
+  selection: TextSelectionPrompt;
+  loading: boolean;
+  result: TranslateTextResult | null;
 }
 
 interface AnnotationPopoverState {
@@ -82,6 +91,7 @@ interface PdfReaderProps {
     quoteText: string;
     color: AnnotationColor;
     focusComment: boolean;
+    comment?: string;
   }) => Promise<void>;
   onCreateAreaAnnotation: (payload: {
     pageNumber: number;
@@ -130,8 +140,10 @@ export function PdfReader({
   const [annotationMode, setAnnotationMode] = useState<'text' | 'area'>('text');
 
   const [selectionBar, setSelectionBar] = useState<TextSelectionPrompt | null>(null);
+  const [translationCard, setTranslationCard] = useState<TranslationCardState | null>(null);
   const [popover, setPopover] = useState<AnnotationPopoverState | null>(null);
   const [pulsingAnnotationId, setPulsingAnnotationId] = useState<string | null>(null);
+  const translateReqIdRef = useRef(0);
 
   // In-page Ctrl+F search state
   const [findOpen, setFindOpen] = useState(false);
@@ -181,18 +193,22 @@ export function PdfReader({
 
   // Dismiss popovers on Escape or outside click
   useEffect(() => {
-    if (!selectionBar && !popover) return;
+    if (!selectionBar && !translationCard && !popover) return;
 
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
+        translateReqIdRef.current += 1;
         setSelectionBar(null);
+        setTranslationCard(null);
         setPopover(null);
       }
     };
     const onMouseDown = (e: MouseEvent) => {
       const target = e.target as HTMLElement | null;
       if (target?.closest('[data-fox-popover]')) return;
+      translateReqIdRef.current += 1;
       setSelectionBar(null);
+      setTranslationCard(null);
       setPopover(null);
     };
 
@@ -202,11 +218,13 @@ export function PdfReader({
       window.removeEventListener('keydown', onKeyDown);
       window.removeEventListener('mousedown', onMouseDown);
     };
-  }, [selectionBar, popover]);
+  }, [selectionBar, translationCard, popover]);
 
   // Load PDF document when selected paper changes
   useEffect(() => {
+    translateReqIdRef.current += 1;
     setSelectionBar(null);
+    setTranslationCard(null);
     setPopover(null);
     setPulsingAnnotationId(null);
     setFindOpen(false);
@@ -442,13 +460,17 @@ export function PdfReader({
   };
 
   const handleTextSelection = useCallback((payload: TextSelectionPrompt) => {
+    translateReqIdRef.current += 1;
     setPopover(null);
+    setTranslationCard(null);
     setSelectionBar(payload);
   }, []);
 
   const handleClickAnnotation = useCallback(
     (annotation: Annotation, anchor: { clientX: number; clientY: number }) => {
+      translateReqIdRef.current += 1;
       setSelectionBar(null);
+      setTranslationCard(null);
       setPopover({ annotationId: annotation.id, anchor });
       onSelectAnnotationFromPdf(annotation);
     },
@@ -466,6 +488,43 @@ export function PdfReader({
       quoteText: payload.quoteText,
       color,
       focusComment,
+    });
+  };
+
+  const handleTranslateSelection = async (selection: TextSelectionPrompt) => {
+    const reqId = ++translateReqIdRef.current;
+    setSelectionBar(null);
+    setTranslationCard({ selection, loading: true, result: null });
+    try {
+      const result = await window.foxreader.translateText(selection.quoteText);
+      if (translateReqIdRef.current !== reqId) return;
+      setTranslationCard({ selection, loading: false, result });
+    } catch (error) {
+      if (translateReqIdRef.current !== reqId) return;
+      setTranslationCard({
+        selection,
+        loading: false,
+        result: {
+          ok: false,
+          originalText: selection.quoteText,
+          error: error instanceof Error ? error.message : String(error),
+        },
+      });
+    }
+  };
+
+  const handleSaveTranslationAsAnnotation = async () => {
+    if (!translationCard?.result?.ok || !translationCard.result.translatedText) return;
+    const { selection, result } = translationCard;
+    setTranslationCard(null);
+    window.getSelection()?.removeAllRanges();
+    await onCreateTextAnnotation({
+      pageNumber: selection.pageNumber,
+      rects: selection.rects,
+      quoteText: selection.quoteText,
+      color: activeColor,
+      focusComment: false,
+      comment: result.translatedText,
     });
   };
 
@@ -911,7 +970,7 @@ export function PdfReader({
         <div
           data-fox-popover
           style={{
-            left: `${Math.min(window.innerWidth - 320, Math.max(12, selectionBar.anchor.clientX - 140))}px`,
+            left: `${Math.min(window.innerWidth - 400, Math.max(12, selectionBar.anchor.clientX - 180))}px`,
             top: `${Math.max(56, selectionBar.anchor.clientY - 48)}px`,
           }}
           className="fixed z-50 flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-2.5 py-1.5 shadow-xl"
@@ -942,6 +1001,16 @@ export function PdfReader({
 
           <button
             type="button"
+            title="划词翻译（有道）"
+            onClick={() => void handleTranslateSelection(selectionBar)}
+            className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium text-slate-700 hover:bg-violet-50 hover:text-violet-700 transition"
+          >
+            <ArrowUpDown className="w-3.5 h-3.5" />
+            翻译
+          </button>
+
+          <button
+            type="button"
             onClick={() => {
               onCopyText(selectionBar.quoteText);
               setSelectionBar(null);
@@ -952,6 +1021,105 @@ export function PdfReader({
             <Copy className="w-3.5 h-3.5" />
             复制
           </button>
+        </div>
+      )}
+
+      {/* Selection Translation Popover Card */}
+      {translationCard && (
+        <div
+          data-fox-popover
+          style={{
+            left: `${Math.min(window.innerWidth - 336, Math.max(12, translationCard.selection.anchor.clientX - 160))}px`,
+            top: `${Math.min(window.innerHeight - 260, Math.max(56, translationCard.selection.anchor.clientY + 12))}px`,
+          }}
+          className="fixed z-50 w-80 max-w-[90vw] rounded-xl border border-slate-200 bg-white shadow-2xl overflow-hidden"
+        >
+          <div className="px-3 py-2 border-b border-slate-100 bg-slate-50/80 flex items-center justify-between gap-2">
+            <div className="flex items-center gap-1.5 text-xs font-semibold text-slate-800">
+              <ArrowUpDown className="w-3.5 h-3.5 text-violet-600" />
+              <span>划词翻译</span>
+              {translationCard.result?.provider && (
+                <span className="rounded bg-violet-100 px-1.5 py-0.5 text-[10px] font-medium text-violet-700">
+                  {translationCard.result.provider}
+                </span>
+              )}
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                translateReqIdRef.current += 1;
+                setTranslationCard(null);
+              }}
+              className="p-0.5 rounded text-slate-400 hover:text-slate-600 hover:bg-slate-200/60 transition"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+
+          <div className="p-3 space-y-2.5 max-h-64 overflow-y-auto">
+            <div className="text-[11px] text-slate-400 line-clamp-2 leading-relaxed border-l-2 border-slate-200 pl-2">
+              {translationCard.result?.originalText || translationCard.selection.quoteText}
+            </div>
+
+            {translationCard.loading ? (
+              <div className="py-4 flex items-center justify-center gap-2 text-xs text-slate-500">
+                <Loader2 className="w-4 h-4 animate-spin text-violet-600" />
+                <span>正在翻译...</span>
+              </div>
+            ) : translationCard.result?.ok && translationCard.result.translatedText ? (
+              <div className="space-y-1.5">
+                {translationCard.result.phonetic && (
+                  <div className="text-[11px] font-mono text-slate-500">
+                    /{translationCard.result.phonetic}/
+                  </div>
+                )}
+                <div className="text-xs text-slate-800 leading-relaxed whitespace-pre-wrap select-text">
+                  {translationCard.result.translatedText}
+                </div>
+                {translationCard.result.explains && translationCard.result.explains.length > 0 && (
+                  <ul className="pt-1 border-t border-slate-100 space-y-0.5 text-[11px] text-slate-600 select-text">
+                    {translationCard.result.explains.slice(0, 4).map((line) => (
+                      <li key={line}>{line}</li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            ) : (
+              <div className="rounded-lg bg-amber-50 border border-amber-200 px-2.5 py-2 flex items-center justify-between gap-2 text-xs text-amber-800">
+                <span>{translationCard.result?.error || '翻译失败'}</span>
+                <button
+                  type="button"
+                  onClick={() => void handleTranslateSelection(translationCard.selection)}
+                  className="px-2 py-0.5 rounded bg-white border border-amber-300 text-[11px] font-medium hover:bg-amber-100 shrink-0 transition"
+                >
+                  重试
+                </button>
+              </div>
+            )}
+          </div>
+
+          {translationCard.result?.ok && translationCard.result.translatedText && (
+            <div className="px-3 py-2 border-t border-slate-100 bg-slate-50/70 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  onCopyText(translationCard.result?.translatedText ?? '');
+                }}
+                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md border border-slate-200 bg-white text-[11px] font-medium text-slate-700 hover:bg-slate-100 transition"
+              >
+                <Copy className="w-3 h-3" />
+                复制译文
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleSaveTranslationAsAnnotation()}
+                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-violet-600 text-[11px] font-medium text-white hover:bg-violet-700 transition"
+              >
+                <Highlighter className="w-3 h-3" />
+                高亮并存为备注
+              </button>
+            </div>
+          )}
         </div>
       )}
 

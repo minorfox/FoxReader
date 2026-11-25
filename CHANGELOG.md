@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Batch paper selection (including `Shift + Click` range selection and Select All) and batch deletion in the left library sidebar.
+- Automatic 3-tier PDF Page-1 title, author, affiliation, year, and DOI extraction on import (with offline re-extraction), replacing raw filenames with real paper titles while filtering publisher chrome and dirty metadata.
+- Right-sidebar collapsible **「作者与机构」** card displaying clickable author and institution search chips (`affiliations` stored in SQLite + FTS5/CJK search with automatic schema migration) and an optional **「联网补全」** OpenAlex lookup button.
+- Manual **「检查更新」** check in Settings (`SettingsModal`) querying GitHub Releases without auto-downloading binaries or breaking offline-first defaults.
+- On-demand **selection translation** (`翻译` button with `ArrowUpDown` icon in the text selection bar), cleaning hyphenated PDF line breaks and translating via Youdao (with MyMemory fallback), supporting phonetic/explains preview, copy, and one-click save into highlight comments.
+
+### Fixed
+
+- Fixed opaque white outer background on Windows `.ico` (`build/icon.ico`) and renderer PNG (`src/renderer/assets/icon.png`) caused by non-premultiplied zero-alpha RGB bytes during icon downscaling in `scripts/generate-icons.mjs`, and tightened icon outer padding to ~3.5% per side.
+
 ## [0.1.0] - 2026-11-25
 
 ### Added (Release & Polish)

@@ -3,7 +3,10 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import {
   BookOpen,
+  Building2,
   Check,
+  ChevronDown,
+  ChevronRight,
   Copy,
   Eye,
   FileText,
@@ -11,7 +14,11 @@ import {
   Image as ImageIcon,
   MessageSquare,
   Pencil,
+  RefreshCw,
+  Search,
+  Sparkles,
   Trash2,
+  Users,
 } from 'lucide-react';
 import {
   ANNOTATION_COLORS,
@@ -33,12 +40,33 @@ interface RightSidebarProps {
   activeTab: 'annotations' | 'notes';
   selectedAnnotationId: string | null;
   cardRevealRequest: { id: string; focusComment: boolean; nonce: number } | null;
+  reextractingMeta?: boolean;
+  enrichingOnline?: boolean;
   onChangeTab: (tab: 'annotations' | 'notes') => void;
   onJumpToAnnotation: (annotation: Annotation) => void;
   onUpdateAnnotation: (id: string, input: UpdateAnnotationInput) => Promise<void>;
   onDeleteAnnotation: (id: string) => Promise<void>;
   onSaveNote: (paperId: string, contentMd: string) => Promise<void>;
   onCopyText: (text: string) => void;
+  onSearchTerm: (term: string) => void;
+  onEditPaperMetadata: (paper: Paper) => void;
+  onReextractMetadata: (paper: Paper) => Promise<void>;
+  onEnrichOnline: (paper: Paper) => Promise<void>;
+}
+
+function splitMetadataItems(raw: string, separator: RegExp): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const part of raw.split(separator)) {
+    const clean = part.trim();
+    if (!clean) continue;
+    const key = clean.toLowerCase();
+    if (!seen.has(key)) {
+      seen.add(key);
+      result.push(clean);
+    }
+  }
+  return result;
 }
 
 interface AnnotationCardProps {
@@ -396,15 +424,31 @@ export function RightSidebar({
   activeTab,
   selectedAnnotationId,
   cardRevealRequest,
+  reextractingMeta = false,
+  enrichingOnline = false,
   onChangeTab,
   onJumpToAnnotation,
   onUpdateAnnotation,
   onDeleteAnnotation,
   onSaveNote,
   onCopyText,
+  onSearchTerm,
+  onEditPaperMetadata,
+  onReextractMetadata,
+  onEnrichOnline,
 }: RightSidebarProps) {
   const [colorFilter, setColorFilter] = useState<AnnotationColor | 'all'>('all');
   const [kindFilter, setKindFilter] = useState<KindFilter>('all');
+  const [infoExpanded, setInfoExpanded] = useState(true);
+
+  const authorItems = useMemo(
+    () => (selectedPaper ? splitMetadataItems(selectedPaper.authors, /[,，;；]+/) : []),
+    [selectedPaper],
+  );
+  const affiliationItems = useMemo(
+    () => (selectedPaper ? splitMetadataItems(selectedPaper.affiliations, /[;；]+/) : []),
+    [selectedPaper],
+  );
 
   const filteredAnnotations = useMemo(() => {
     return annotations.filter((ann) => {
@@ -449,6 +493,119 @@ export function RightSidebar({
           整篇笔记
         </button>
       </div>
+
+      {/* Paper Authors & Affiliations Card */}
+      {selectedPaper && (
+        <div className="border-b border-slate-200 bg-slate-50/70 shrink-0">
+          <div className="px-3 py-2 flex items-center justify-between gap-1.5">
+            <button
+              type="button"
+              onClick={() => setInfoExpanded((prev) => !prev)}
+              className="inline-flex items-center gap-1 text-[11px] font-semibold text-slate-700 hover:text-violet-700 transition min-w-0"
+            >
+              {infoExpanded ? (
+                <ChevronDown className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+              ) : (
+                <ChevronRight className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+              )}
+              <span className="truncate">作者与机构</span>
+              {selectedPaper.year && (
+                <span className="text-[10px] font-normal px-1.5 py-0.2 rounded bg-slate-200/70 text-slate-600 tabular-nums">
+                  {selectedPaper.year}
+                </span>
+              )}
+            </button>
+            <div className="flex items-center gap-1 shrink-0">
+              <button
+                type="button"
+                disabled={reextractingMeta}
+                title="离线重新识别 PDF 首页标题、作者与机构"
+                onClick={() => void onReextractMetadata(selectedPaper)}
+                className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded border border-slate-200 bg-white text-[10px] font-medium text-slate-600 hover:border-violet-300 hover:text-violet-700 disabled:opacity-50 transition"
+              >
+                <RefreshCw className={`w-2.5 h-2.5 ${reextractingMeta ? 'animate-spin' : ''}`} />
+                重识别
+              </button>
+              <button
+                type="button"
+                disabled={enrichingOnline}
+                title="联网查询 OpenAlex 补全作者与机构信息"
+                onClick={() => void onEnrichOnline(selectedPaper)}
+                className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded border border-violet-200 bg-violet-50 text-[10px] font-medium text-violet-700 hover:bg-violet-100 disabled:opacity-50 transition"
+              >
+                <Sparkles className={`w-2.5 h-2.5 ${enrichingOnline ? 'animate-pulse' : ''}`} />
+                {enrichingOnline ? '补全中' : '联网补全'}
+              </button>
+              <button
+                type="button"
+                title="手动编辑标题、作者与机构"
+                onClick={() => onEditPaperMetadata(selectedPaper)}
+                className="p-1 rounded border border-slate-200 bg-white text-slate-500 hover:text-violet-700 hover:border-violet-300 transition"
+              >
+                <Pencil className="w-2.5 h-2.5" />
+              </button>
+            </div>
+          </div>
+
+          {infoExpanded && (
+            <div className="px-3 pb-2.5 space-y-2 max-h-44 overflow-y-auto">
+              {authorItems.length === 0 && affiliationItems.length === 0 ? (
+                <div className="text-[11px] text-slate-400 leading-relaxed">
+                  暂未识别到作者或机构，可点击上方「重识别」或「联网补全」。
+                </div>
+              ) : (
+                <>
+                  {authorItems.length > 0 && (
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-1 text-[10px] font-medium text-slate-400">
+                        <Users className="w-3 h-3" />
+                        <span>作者（点击搜索）</span>
+                      </div>
+                      <div className="flex flex-wrap gap-1">
+                        {authorItems.map((author) => (
+                          <button
+                            key={author}
+                            type="button"
+                            title={`按作者「${author}」搜索论文库`}
+                            onClick={() => onSearchTerm(author)}
+                            className="inline-flex items-center gap-1 max-w-full rounded-full bg-white border border-slate-200 px-2 py-0.5 text-[11px] text-slate-700 hover:border-violet-400 hover:bg-violet-50 hover:text-violet-800 transition"
+                          >
+                            <Search className="w-2.5 h-2.5 text-slate-400 shrink-0" />
+                            <span className="truncate">{author}</span>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {affiliationItems.length > 0 && (
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-1 text-[10px] font-medium text-slate-400">
+                        <Building2 className="w-3 h-3" />
+                        <span>机构（点击搜索）</span>
+                      </div>
+                      <div className="flex flex-wrap gap-1">
+                        {affiliationItems.map((aff) => (
+                          <button
+                            key={aff}
+                            type="button"
+                            title={`按机构「${aff}」搜索论文库`}
+                            onClick={() => onSearchTerm(aff)}
+                            className="inline-flex items-center gap-1 max-w-full rounded-md bg-violet-50/70 border border-violet-200/80 px-2 py-0.5 text-[11px] text-violet-900 hover:border-violet-400 hover:bg-violet-100 transition text-left"
+                          >
+                            <Search className="w-2.5 h-2.5 text-violet-500 shrink-0" />
+                            <span className="truncate">{aff}</span>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Filter Bar for Annotations Tab */}
       {selectedPaper && activeTab === 'annotations' && (

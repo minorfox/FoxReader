@@ -40,7 +40,10 @@ function sortAnnotations(items: Annotation[]): Annotation[] {
 
 export function App() {
   const [dataDir, setDataDir] = useState('');
+  const [appVersion, setAppVersion] = useState('0.1.0');
   const [lockWarning, setLockWarning] = useState<DataDirLockInfo | null>(null);
+  const [reextractingMeta, setReextractingMeta] = useState(false);
+  const [enrichingOnline, setEnrichingOnline] = useState(false);
   const [overview, setOverview] = useState<LibraryOverview>({
     folders: [],
     totalCount: 0,
@@ -78,6 +81,10 @@ export function App() {
   const [editingPaper, setEditingPaper] = useState<Paper | null>(null);
   const [confirmDeleteFolder, setConfirmDeleteFolder] = useState<Folder | null>(null);
   const [confirmDeletePaper, setConfirmDeletePaper] = useState<Paper | null>(null);
+  const [confirmBatchDelete, setConfirmBatchDelete] = useState<{
+    papers: Paper[];
+    onDone: () => void;
+  } | null>(null);
   const [confirmDeleteTag, setConfirmDeleteTag] = useState<Tag | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [windowFileDragOver, setWindowFileDragOver] = useState(false);
@@ -123,6 +130,7 @@ export function App() {
   useEffect(() => {
     void window.foxreader.getSettings().then((s) => {
       setDataDir(s.dataDir);
+      setAppVersion(s.appVersion || '0.1.0');
       setLockWarning(s.lockWarning ?? null);
     });
     void refreshOverview();
@@ -183,6 +191,8 @@ export function App() {
               pageCount: meta.pageCount,
               ...(meta.title ? { title: meta.title } : {}),
               ...(meta.authors ? { authors: meta.authors } : {}),
+              ...(meta.affiliations ? { affiliations: meta.affiliations } : {}),
+              ...(meta.year ? { year: meta.year } : {}),
             });
             await refreshPapers();
           });
@@ -304,6 +314,75 @@ export function App() {
     pushToast('success', '论文元数据与标签已更新');
   };
 
+  const handleSearchByTerm = useCallback(
+    (term: string) => {
+      const clean = term.trim();
+      if (!clean) return;
+      setSearchQuery(clean);
+      setDebouncedSearch(clean);
+      if (leftCollapsed) {
+        setLeftCollapsed(false);
+      }
+      pushToast('info', `已按「${clean}」搜索论文库`);
+    },
+    [leftCollapsed, pushToast],
+  );
+
+  const handleReextractMetadata = useCallback(
+    async (paper: Paper) => {
+      setReextractingMeta(true);
+      try {
+        const meta = await extractPdfMetadata(paper.sha256);
+        if (!meta || (!meta.title && !meta.authors && !meta.affiliations && !meta.year)) {
+          pushToast('warning', '未能从 PDF 首页识别出有效标题、作者或机构信息');
+          return;
+        }
+        await window.foxreader.updatePaperMetadata(paper.id, {
+          pageCount: meta.pageCount,
+          ...(meta.title ? { title: meta.title } : {}),
+          ...(meta.authors ? { authors: meta.authors } : {}),
+          ...(meta.affiliations ? { affiliations: meta.affiliations } : {}),
+          ...(meta.year ? { year: meta.year } : {}),
+        });
+        await refreshPapers();
+        pushToast('success', '已重新识别论文标题、作者与机构');
+      } finally {
+        setReextractingMeta(false);
+      }
+    },
+    [pushToast, refreshPapers],
+  );
+
+  const handleEnrichOnline = useCallback(
+    async (paper: Paper) => {
+      setEnrichingOnline(true);
+      try {
+        const localMeta = await extractPdfMetadata(paper.sha256);
+        const res = await window.foxreader.enrichPaperOnline({
+          titleHint: localMeta?.title || paper.title,
+          doiHint: localMeta?.doi,
+        });
+        if (!res.matched) {
+          pushToast('warning', res.error || '未能联网匹配到该论文信息');
+          return;
+        }
+        await window.foxreader.updatePaperMetadata(paper.id, {
+          ...(res.title ? { title: res.title } : {}),
+          ...(res.authors ? { authors: res.authors } : {}),
+          ...(res.affiliations ? { affiliations: res.affiliations } : {}),
+          ...(res.year !== undefined ? { year: res.year } : {}),
+        });
+        await refreshPapers();
+        pushToast('success', `已通过 ${res.source || 'OpenAlex'} 补全作者与机构信息`);
+      } catch (error) {
+        pushToast('error', `联网补全失败：${error instanceof Error ? error.message : String(error)}`);
+      } finally {
+        setEnrichingOnline(false);
+      }
+    },
+    [pushToast, refreshPapers],
+  );
+
   const handleConfirmDeletePaper = async () => {
     if (!confirmDeletePaper) return;
     const target = confirmDeletePaper;
@@ -314,6 +393,20 @@ export function App() {
     }
     await refreshAll();
     pushToast('info', `已删除论文「${target.title}」及其本地托管副本`);
+  };
+
+  const handleConfirmBatchDeletePapers = async () => {
+    if (!confirmBatchDelete) return;
+    const { papers: targets, onDone } = confirmBatchDelete;
+    setConfirmBatchDelete(null);
+    const ids = targets.map((p) => p.id);
+    const { deletedCount } = await window.foxreader.deletePapers(ids);
+    if (selectedPaperId && ids.includes(selectedPaperId)) {
+      setSelectedPaperId(null);
+    }
+    onDone();
+    await refreshAll();
+    pushToast('info', `已批量删除 ${deletedCount} 篇论文及其本地托管副本`);
   };
 
   const handleSaveProgress = useCallback((paperId: string, lastPage: number, lastZoom: number) => {
@@ -357,6 +450,7 @@ export function App() {
       quoteText: string;
       color: AnnotationColor;
       focusComment: boolean;
+      comment?: string;
     }) => {
       if (!selectedPaperId) return;
       const created = await window.foxreader.createAnnotation({
@@ -366,6 +460,7 @@ export function App() {
         rects: payload.rects,
         color: payload.color,
         quoteText: payload.quoteText,
+        ...(payload.comment ? { comment: payload.comment } : {}),
       });
       setActiveColor(payload.color);
       setAnnotations((prev) => sortAnnotations([...prev, created]));
@@ -525,6 +620,9 @@ export function App() {
           onMovePaperToFolder={handleMovePaperToFolder}
           onEditPaper={setEditingPaper}
           onRequestDeletePaper={setConfirmDeletePaper}
+          onRequestBatchDeletePapers={(items, onDone) =>
+            setConfirmBatchDelete({ papers: items, onDone })
+          }
           onOpenSettings={() => setSettingsOpen(true)}
         />
       )}
@@ -558,12 +656,18 @@ export function App() {
           activeTab={rightTab}
           selectedAnnotationId={selectedAnnotationId}
           cardRevealRequest={cardRevealRequest}
+          reextractingMeta={reextractingMeta}
+          enrichingOnline={enrichingOnline}
           onChangeTab={setRightTab}
           onJumpToAnnotation={handleJumpToAnnotation}
           onUpdateAnnotation={handleUpdateAnnotation}
           onDeleteAnnotation={handleDeleteAnnotation}
           onSaveNote={handleSaveNote}
           onCopyText={handleCopyText}
+          onSearchTerm={handleSearchByTerm}
+          onEditPaperMetadata={setEditingPaper}
+          onReextractMetadata={handleReextractMetadata}
+          onEnrichOnline={handleEnrichOnline}
         />
       )}
 
@@ -625,12 +729,36 @@ export function App() {
         onConfirm={() => void handleConfirmDeletePaper()}
       />
 
+      <ConfirmModal
+        open={confirmBatchDelete !== null}
+        title="确认批量删除论文"
+        danger
+        confirmLabel={`彻底删除 (${confirmBatchDelete?.papers.length ?? 0})`}
+        message={
+          confirmBatchDelete
+            ? `确定要从 FoxReader 库中批量删除选中的 ${confirmBatchDelete.papers.length} 篇论文吗？\n\n${confirmBatchDelete.papers
+                .slice(0, 3)
+                .map((p) => `· ${p.title}`)
+                .join('\n')}${
+                confirmBatchDelete.papers.length > 3
+                  ? `\n· ...等共 ${confirmBatchDelete.papers.length} 篇`
+                  : ''
+              }\n\n此操作会清理数据库记录、托管 PDF 副本与关联截图（不会影响磁盘上的原始外部文件）。`
+            : ''
+        }
+        onCancel={() => setConfirmBatchDelete(null)}
+        onConfirm={() => void handleConfirmBatchDeletePapers()}
+      />
+
       <SettingsModal
         open={settingsOpen}
         dataDir={dataDir}
+        appVersion={appVersion}
         onClose={() => setSettingsOpen(false)}
         onSelectDataDir={handleSelectDataDir}
         onOpenDataDir={() => window.foxreader.openDataDir()}
+        onCheckForUpdates={() => window.foxreader.checkForUpdates()}
+        onOpenExternalUrl={(url) => window.foxreader.openExternalUrl(url)}
       />
 
       <LockWarningModal

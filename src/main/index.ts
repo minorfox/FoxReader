@@ -5,10 +5,12 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { app, BrowserWindow, dialog, ipcMain, net, protocol, shell } from 'electron';
 import { DataDirLock } from './dataLock.js';
 import { FoxReaderDatabase } from './database.js';
+import { checkLatestGithubRelease, fetchOpenAlexMetadata, translateSelectionText } from './onlineMetadata.js';
 import { SettingsManager } from './settings.js';
 import type {
   CreateAnnotationInput,
   DataDirLockInfo,
+  EnrichPaperOnlineInput,
   PaperListQuery,
   UpdateAnnotationInput,
   UpdatePaperMetadataInput,
@@ -165,6 +167,7 @@ function registerFoxPdfProtocol(): void {
 function registerIpcHandlers(): void {
   ipcMain.handle('app:getSettings', () => ({
     ...settingsManager.getSettings(),
+    appVersion: app.getVersion(),
     lockWarning: currentLockWarning,
   }));
 
@@ -193,18 +196,35 @@ function registerIpcHandlers(): void {
     }
     const nextDir = result.filePaths[0];
     if (path.resolve(nextDir) === path.resolve(settingsManager.getDataDir())) {
-      return { ...settingsManager.getSettings(), lockWarning: currentLockWarning };
+      return {
+        ...settingsManager.getSettings(),
+        appVersion: app.getVersion(),
+        lockWarning: currentLockWarning,
+      };
     }
     dataDirLock.release();
     database.close();
     const updated = settingsManager.setDataDir(nextDir);
     currentLockWarning = dataDirLock.acquire(updated.dataDir);
     database = new FoxReaderDatabase(updated.dataDir);
-    return { ...updated, lockWarning: currentLockWarning };
+    return {
+      ...updated,
+      appVersion: app.getVersion(),
+      lockWarning: currentLockWarning,
+    };
   });
 
   ipcMain.handle('app:openDataDir', async () => {
     await shell.openPath(settingsManager.getDataDir());
+  });
+
+  ipcMain.handle('app:checkUpdate', () => checkLatestGithubRelease(app.getVersion()));
+
+  ipcMain.handle('app:openExternal', async (_event, url: string) => {
+    if (typeof url !== 'string' || !url.startsWith('https://github.com/minorfox/FoxReader')) {
+      throw new Error('Blocked external URL outside allowed repository origin.');
+    }
+    await shell.openExternal(url);
   });
 
   ipcMain.handle('library:getOverview', () => database.getLibraryOverview());
@@ -254,6 +274,12 @@ function registerIpcHandlers(): void {
     database.updatePaperMetadata(paperId, input),
   );
 
+  ipcMain.handle('papers:enrichOnline', (_event, input: EnrichPaperOnlineInput) =>
+    fetchOpenAlexMetadata(input),
+  );
+
+  ipcMain.handle('translate:text', (_event, text: string) => translateSelectionText(text));
+
   ipcMain.handle('papers:moveToFolder', (_event, paperId: string, folderId: string | null) =>
     database.movePaperToFolder(paperId, folderId),
   );
@@ -265,6 +291,10 @@ function registerIpcHandlers(): void {
   ipcMain.handle('papers:delete', async (_event, paperId: string) => {
     await database.deletePaper(paperId, settingsManager.getDataDir());
   });
+
+  ipcMain.handle('papers:deleteMany', async (_event, paperIds: string[]) =>
+    database.deletePapers(paperIds, settingsManager.getDataDir()),
+  );
 
   ipcMain.handle('annotations:list', (_event, paperId: string) => database.listAnnotations(paperId));
 
