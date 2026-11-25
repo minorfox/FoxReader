@@ -16,8 +16,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Performance
 
 - Added HTTP byte-range (`206 Partial Content`) streaming for `foxpdf://paper/` and in-memory `foxpdf://assets/` caching in the main process.
-- Switched renderer `pdfjs-dist` to the modern native build (`pdfjs-dist/build/pdf.mjs`), removed eager full-document page scanning on load, tightened lazy render window to `currentPage ± 1` with `page.cleanup()`, capped Retina canvas DPR scaling (`<= 2x` / `<= 1.5x` above 150% zoom), and serialized background metadata extraction after initial page render.
+- Removed eager full-document page scanning on load, tightened lazy render window to `currentPage ± 1` with `page.cleanup()`, capped Retina canvas DPR scaling (`<= 2x` / `<= 1.5x` above 150% zoom), and serialized background metadata extraction after initial page render.
 - Hardened `foxpdf://` protocol handle lifecycle for Windows and macOS: short byte-range PDF slices close file handles immediately before returning `206`, full stream responses destroy cleanly on request abort (preventing Windows `EBUSY` locks), and `foxpdf://snapshot/` reads directly without `net.fetch(file://)`.
+
+### Fixed
+
+- Kept `pdfjs-dist/legacy/build/pdf.mjs` for Electron 39 (Chromium 142) compatibility where `Map.prototype.getOrInsertComputed` is unavailable, and added an Electron 39 runtime PDF rendering smoke test in `scripts/test-db.mjs`.
 
 ## [0.2.1] - 2026-11-25
 
