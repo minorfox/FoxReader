@@ -153,7 +153,7 @@ export async function fetchOpenAlexMetadata(
   input: EnrichPaperOnlineInput,
 ): Promise<EnrichPaperOnlineResult> {
   const headers = {
-    'User-Agent': 'FoxReader/0.1 (mailto:support@foxreader.local)',
+    'User-Agent': 'FoxReader/0.2 (mailto:lihuang@swufe.edu.cn)',
     Accept: 'application/json',
   };
 

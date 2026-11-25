@@ -10,6 +10,9 @@ import {
   RefreshCw,
   ExternalLink,
   Loader2,
+  Mail,
+  Copy,
+  Check,
 } from 'lucide-react';
 import type {
   DataDirLockInfo,
@@ -409,15 +412,23 @@ export function SettingsModal({
 }) {
   const [checkingUpdate, setCheckingUpdate] = useState(false);
   const [updateResult, setUpdateResult] = useState<UpdateCheckResult | null>(null);
+  const [copiedEmail, setCopiedEmail] = useState(false);
 
   useEffect(() => {
     if (!open) {
       setUpdateResult(null);
       setCheckingUpdate(false);
+      setCopiedEmail(false);
     }
   }, [open]);
 
   if (!open) return null;
+
+  const handleCopyEmail = async () => {
+    await navigator.clipboard.writeText('lihuang@swufe.edu.cn');
+    setCopiedEmail(true);
+    setTimeout(() => setCopiedEmail(false), 1800);
+  };
 
   const handleCheckUpdate = async () => {
     setCheckingUpdate(true);
@@ -538,6 +549,31 @@ export function SettingsModal({
                 )}
               </div>
             )}
+          </div>
+
+          <div className="pt-4 border-t border-slate-100 flex items-center justify-between gap-2">
+            <div className="flex items-center gap-1.5 text-xs text-slate-600 min-w-0">
+              <Mail className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+              <span className="font-medium text-slate-700 shrink-0">联系与反馈</span>
+              <span className="font-mono text-slate-600 truncate select-text">lihuang@swufe.edu.cn</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => void handleCopyEmail()}
+              className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-slate-200 text-xs font-medium text-slate-700 hover:border-violet-300 hover:text-violet-700 shrink-0 transition"
+            >
+              {copiedEmail ? (
+                <>
+                  <Check className="w-3.5 h-3.5 text-emerald-600" />
+                  <span className="text-emerald-700">已复制</span>
+                </>
+              ) : (
+                <>
+                  <Copy className="w-3.5 h-3.5" />
+                  <span>复制邮箱</span>
+                </>
+              )}
+            </button>
           </div>
         </div>
         <div className="flex justify-end px-5 py-3 bg-slate-50 border-t border-slate-100">

@@ -6,6 +6,10 @@ on:
       - 'v*'
   workflow_dispatch:
 
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: write
 
@@ -112,6 +116,7 @@ jobs:
               "- **Windows**：个人开源项目未购买商业代码签名证书，若弹出「Windows 已保护你的电脑（SmartScreen）」，点击 **「更多信息 → 仍要运行」** 即可。",
               "- **macOS**：若提示「已损坏」或「无法验证开发者」，在终端执行 `xattr -cr /Applications/FoxReader.app` 后即可正常打开。",
               "- **OneDrive 多机同步**：只需在软件设置中将数据目录指向网盘内的同一个 `FoxReaderData/` 文件夹，并遵循单台退出同步完再开另一台的接力原则。",
+              "- **问题反馈与联系**：`lihuang@swufe.edu.cn`",
               ""
             ].join("\n");
             fs.writeFileSync("../release-body.md", md, "utf-8");
