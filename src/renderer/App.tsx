@@ -78,6 +78,10 @@ export function App() {
   const [editingPaper, setEditingPaper] = useState<Paper | null>(null);
   const [confirmDeleteFolder, setConfirmDeleteFolder] = useState<Folder | null>(null);
   const [confirmDeletePaper, setConfirmDeletePaper] = useState<Paper | null>(null);
+  const [confirmBatchDelete, setConfirmBatchDelete] = useState<{
+    papers: Paper[];
+    onDone: () => void;
+  } | null>(null);
   const [confirmDeleteTag, setConfirmDeleteTag] = useState<Tag | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [windowFileDragOver, setWindowFileDragOver] = useState(false);
@@ -316,6 +320,20 @@ export function App() {
     pushToast('info', `已删除论文「${target.title}」及其本地托管副本`);
   };
 
+  const handleConfirmBatchDeletePapers = async () => {
+    if (!confirmBatchDelete) return;
+    const { papers: targets, onDone } = confirmBatchDelete;
+    setConfirmBatchDelete(null);
+    const ids = targets.map((p) => p.id);
+    const { deletedCount } = await window.foxreader.deletePapers(ids);
+    if (selectedPaperId && ids.includes(selectedPaperId)) {
+      setSelectedPaperId(null);
+    }
+    onDone();
+    await refreshAll();
+    pushToast('info', `已批量删除 ${deletedCount} 篇论文及其本地托管副本`);
+  };
+
   const handleSaveProgress = useCallback((paperId: string, lastPage: number, lastZoom: number) => {
     void window.foxreader.updatePaperProgress(paperId, lastPage, lastZoom);
   }, []);
@@ -525,6 +543,9 @@ export function App() {
           onMovePaperToFolder={handleMovePaperToFolder}
           onEditPaper={setEditingPaper}
           onRequestDeletePaper={setConfirmDeletePaper}
+          onRequestBatchDeletePapers={(items, onDone) =>
+            setConfirmBatchDelete({ papers: items, onDone })
+          }
           onOpenSettings={() => setSettingsOpen(true)}
         />
       )}
@@ -623,6 +644,27 @@ export function App() {
         }
         onCancel={() => setConfirmDeletePaper(null)}
         onConfirm={() => void handleConfirmDeletePaper()}
+      />
+
+      <ConfirmModal
+        open={confirmBatchDelete !== null}
+        title="确认批量删除论文"
+        danger
+        confirmLabel={`彻底删除 (${confirmBatchDelete?.papers.length ?? 0})`}
+        message={
+          confirmBatchDelete
+            ? `确定要从 FoxReader 库中批量删除选中的 ${confirmBatchDelete.papers.length} 篇论文吗？\n\n${confirmBatchDelete.papers
+                .slice(0, 3)
+                .map((p) => `· ${p.title}`)
+                .join('\n')}${
+                confirmBatchDelete.papers.length > 3
+                  ? `\n· ...等共 ${confirmBatchDelete.papers.length} 篇`
+                  : ''
+              }\n\n此操作会清理数据库记录、托管 PDF 副本与关联截图（不会影响磁盘上的原始外部文件）。`
+            : ''
+        }
+        onCancel={() => setConfirmBatchDelete(null)}
+        onConfirm={() => void handleConfirmBatchDeletePapers()}
       />
 
       <SettingsModal

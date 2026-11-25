@@ -28,6 +28,7 @@ const api: FoxReaderApi = {
   updatePaperProgress: (paperId: string, lastPage: number, lastZoom: number) =>
     ipcRenderer.invoke('papers:updateProgress', paperId, lastPage, lastZoom),
   deletePaper: (paperId: string) => ipcRenderer.invoke('papers:delete', paperId),
+  deletePapers: (paperIds: string[]) => ipcRenderer.invoke('papers:deleteMany', paperIds),
   listAnnotations: (paperId: string) => ipcRenderer.invoke('annotations:list', paperId),
   createAnnotation: (input: CreateAnnotationInput) =>
     ipcRenderer.invoke('annotations:create', input),

@@ -182,6 +182,10 @@ export interface DeleteFolderResult {
   movedPaperCount: number;
 }
 
+export interface DeletePapersResult {
+  deletedCount: number;
+}
+
 export interface FoxReaderApi {
   getSettings: () => Promise<AppSettings>;
   selectDataDir: () => Promise<AppSettings | null>;
@@ -197,6 +201,7 @@ export interface FoxReaderApi {
   movePaperToFolder: (paperId: string, folderId: string | null) => Promise<Paper>;
   updatePaperProgress: (paperId: string, lastPage: number, lastZoom: number) => Promise<void>;
   deletePaper: (paperId: string) => Promise<void>;
+  deletePapers: (paperIds: string[]) => Promise<DeletePapersResult>;
   listAnnotations: (paperId: string) => Promise<Annotation[]>;
   createAnnotation: (input: CreateAnnotationInput) => Promise<Annotation>;
   updateAnnotation: (id: string, input: UpdateAnnotationInput) => Promise<Annotation>;

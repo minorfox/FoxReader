@@ -218,6 +218,27 @@ async function main() {
     assert.equal(fs.existsSync(managedPdfPath), false, 'Managed PDF should be deleted after deletePaper');
     assert.equal(fs.existsSync(snap2Path), false, 'Remaining annotation snapshot PNG should be deleted on deletePaper');
 
+    // 10. Batch delete papers -> removes multiple DB rows & managed PDFs
+    const batchPdfA = path.join(tempRoot, 'batch-a.pdf');
+    const batchPdfB = path.join(tempRoot, 'batch-b.pdf');
+    fs.writeFileSync(batchPdfA, '%PDF-1.4\n% Batch A\n%%EOF\n', 'utf-8');
+    fs.writeFileSync(batchPdfB, '%PDF-1.4\n% Batch B\n%%EOF\n', 'utf-8');
+    const resA = await db.importPdfFile(batchPdfA, null, dataDir);
+    const resB = await db.importPdfFile(batchPdfB, null, dataDir);
+    assert.equal(resA.status, 'imported');
+    assert.equal(resB.status, 'imported');
+    const pathA = path.join(dataDir, 'pdfs', `${resA.paper.sha256}.pdf`);
+    const pathB = path.join(dataDir, 'pdfs', `${resB.paper.sha256}.pdf`);
+    assert.equal(fs.existsSync(pathA), true);
+    assert.equal(fs.existsSync(pathB), true);
+
+    const batchDel = await db.deletePapers([resA.paper.id, resB.paper.id, 'non-existent-id'], dataDir);
+    assert.equal(batchDel.deletedCount, 2);
+    assert.equal(db.getPaperById(resA.paper.id), null);
+    assert.equal(db.getPaperById(resB.paper.id), null);
+    assert.equal(fs.existsSync(pathA), false);
+    assert.equal(fs.existsSync(pathB), false);
+
     db.close();
     console.log('ALL_DB_TESTS_PASSED');
   } finally {

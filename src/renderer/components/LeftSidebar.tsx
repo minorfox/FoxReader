@@ -1,5 +1,6 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
+  CheckSquare,
   ChevronDown,
   ChevronRight,
   Folder as FolderIcon,
@@ -11,6 +12,7 @@ import {
   Plus,
   Search,
   Settings,
+  Square,
   Tag as TagIcon,
   Trash2,
   X,
@@ -91,6 +93,7 @@ interface LeftSidebarProps {
   onMovePaperToFolder: (paperId: string, folderId: string | null) => Promise<void>;
   onEditPaper: (paper: Paper) => void;
   onRequestDeletePaper: (paper: Paper) => void;
+  onRequestBatchDeletePapers: (papers: Paper[], onDone: () => void) => void;
   onOpenSettings: () => void;
 }
 
@@ -122,6 +125,7 @@ export function LeftSidebar({
   onMovePaperToFolder,
   onEditPaper,
   onRequestDeletePaper,
+  onRequestBatchDeletePapers,
   onOpenSettings,
 }: LeftSidebarProps) {
   const [expandedIds, setExpandedIds] = useState<Set<string>>(() => new Set());
@@ -130,6 +134,57 @@ export function LeftSidebar({
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
   const [dragOverTarget, setDragOverTarget] = useState<string | null>(null);
+
+  const [batchMode, setBatchMode] = useState(false);
+  const [batchSelectedIds, setBatchSelectedIds] = useState<Set<string>>(() => new Set());
+  const lastBatchIdxRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    const visibleIds = new Set(papers.map((p) => p.id));
+    setBatchSelectedIds((prev) => {
+      let changed = false;
+      const next = new Set<string>();
+      for (const id of prev) {
+        if (visibleIds.has(id)) next.add(id);
+        else changed = true;
+      }
+      return changed ? next : prev;
+    });
+    if (papers.length === 0 && batchMode) {
+      setBatchMode(false);
+    }
+  }, [papers, batchMode]);
+
+  const exitBatchMode = () => {
+    setBatchMode(false);
+    setBatchSelectedIds(new Set());
+    lastBatchIdxRef.current = null;
+  };
+
+  const toggleBatchSelect = (paperId: string, idx: number, shiftKey: boolean) => {
+    setBatchSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (shiftKey && lastBatchIdxRef.current !== null) {
+        const start = Math.min(lastBatchIdxRef.current, idx);
+        const end = Math.max(lastBatchIdxRef.current, idx);
+        for (let i = start; i <= end; i++) {
+          if (papers[i]) next.add(papers[i].id);
+        }
+      } else if (next.has(paperId)) {
+        next.delete(paperId);
+      } else {
+        next.add(paperId);
+      }
+      return next;
+    });
+    lastBatchIdxRef.current = idx;
+  };
+
+  const allSelected = papers.length > 0 && papers.every((p) => batchSelectedIds.has(p.id));
+  const selectedBatchPapers = useMemo(
+    () => papers.filter((p) => batchSelectedIds.has(p.id)),
+    [papers, batchSelectedIds],
+  );
 
   const folderTree = useMemo(() => buildFolderTree(folders), [folders]);
 
@@ -501,7 +556,7 @@ export function LeftSidebar({
         )}
       </div>
 
-      {/* Status Filter */}
+      {/* Status Filter & Batch Toggle */}
       <div className="px-2.5 py-2 border-b border-slate-100 flex items-center gap-1 shrink-0">
         {(['all', 'unread', 'reading', 'read'] as const).map((st) => (
           <button
@@ -517,7 +572,63 @@ export function LeftSidebar({
             {st === 'all' ? '全部' : STATUS_LABEL[st]}
           </button>
         ))}
+        {papers.length > 0 && (
+          <button
+            type="button"
+            title={batchMode ? '退出批量管理' : '批量选择并删除论文'}
+            onClick={() => (batchMode ? exitBatchMode() : setBatchMode(true))}
+            className={`px-2 py-1 rounded text-[11px] font-medium transition shrink-0 ${
+              batchMode
+                ? 'bg-violet-600 text-white'
+                : 'text-slate-500 hover:text-violet-700 hover:bg-violet-50'
+            }`}
+          >
+            批量
+          </button>
+        )}
       </div>
+
+      {/* Batch Action Bar */}
+      {batchMode && papers.length > 0 && (
+        <div className="px-2.5 py-1.5 border-b border-violet-200 bg-violet-50/80 flex items-center justify-between gap-2 shrink-0">
+          <button
+            type="button"
+            onClick={() => {
+              if (allSelected) {
+                setBatchSelectedIds(new Set());
+              } else {
+                setBatchSelectedIds(new Set(papers.map((p) => p.id)));
+              }
+            }}
+            className="inline-flex items-center gap-1.5 text-xs font-medium text-violet-900 hover:text-violet-700"
+          >
+            {allSelected ? (
+              <CheckSquare className="w-3.5 h-3.5 text-violet-600" />
+            ) : (
+              <Square className="w-3.5 h-3.5 text-violet-500" />
+            )}
+            <span>全选 ({selectedBatchPapers.length}/{papers.length})</span>
+          </button>
+          <div className="flex items-center gap-1.5">
+            <button
+              type="button"
+              disabled={selectedBatchPapers.length === 0}
+              onClick={() => onRequestBatchDeletePapers(selectedBatchPapers, exitBatchMode)}
+              className="inline-flex items-center gap-1 px-2 py-1 rounded bg-red-600 hover:bg-red-700 disabled:opacity-40 text-white text-[11px] font-medium transition"
+            >
+              <Trash2 className="w-3 h-3" />
+              删除 ({selectedBatchPapers.length})
+            </button>
+            <button
+              type="button"
+              onClick={exitBatchMode}
+              className="px-2 py-1 rounded text-[11px] font-medium text-slate-600 hover:bg-white transition"
+            >
+              完成
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Paper List */}
       <div className="flex-1 overflow-y-auto p-2 space-y-1">
@@ -530,56 +641,81 @@ export function LeftSidebar({
             </p>
           </div>
         ) : (
-          papers.map((paper) => {
+          papers.map((paper, idx) => {
             const isSelected = paper.id === selectedPaperId;
+            const isChecked = batchSelectedIds.has(paper.id);
             return (
               <div
                 key={paper.id}
-                draggable
+                draggable={!batchMode}
                 onDragStart={(e) => {
+                  if (batchMode) return;
                   e.dataTransfer.setData('application/x-foxreader-paper-id', paper.id);
                   e.dataTransfer.effectAllowed = 'move';
                 }}
-                onClick={() => onSelectPaper(paper.id)}
+                onClick={(e) => {
+                  if (batchMode) {
+                    toggleBatchSelect(paper.id, idx, e.shiftKey);
+                  } else {
+                    onSelectPaper(paper.id);
+                  }
+                }}
                 className={`group rounded-lg border px-2.5 py-2 cursor-pointer transition ${
-                  isSelected
-                    ? 'border-violet-300 bg-violet-50/70 shadow-2xs'
-                    : 'border-transparent hover:border-slate-200 hover:bg-slate-50'
+                  batchMode
+                    ? isChecked
+                      ? 'border-violet-300 bg-violet-50/70'
+                      : 'border-transparent hover:border-slate-200 hover:bg-slate-50'
+                    : isSelected
+                      ? 'border-violet-300 bg-violet-50/70 shadow-2xs'
+                      : 'border-transparent hover:border-slate-200 hover:bg-slate-50'
                 }`}
               >
                 <div className="flex items-start justify-between gap-2">
-                  <h4
-                    className={`text-xs leading-snug line-clamp-2 ${
-                      isSelected ? 'font-semibold text-slate-900' : 'font-medium text-slate-800'
-                    }`}
-                    title={paper.title}
-                  >
-                    {paper.title}
-                  </h4>
-                  <div className="hidden group-hover:flex items-center gap-0.5 shrink-0">
-                    <button
-                      type="button"
-                      title="编辑元数据"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onEditPaper(paper);
-                      }}
-                      className="p-1 rounded hover:bg-slate-200/80 text-slate-500 hover:text-slate-800"
+                  <div className="flex items-start gap-2 min-w-0 flex-1">
+                    {batchMode && (
+                      <span className="mt-0.5 shrink-0">
+                        {isChecked ? (
+                          <CheckSquare className="w-3.5 h-3.5 text-violet-600" />
+                        ) : (
+                          <Square className="w-3.5 h-3.5 text-slate-400" />
+                        )}
+                      </span>
+                    )}
+                    <h4
+                      className={`text-xs leading-snug line-clamp-2 ${
+                        isSelected && !batchMode ? 'font-semibold text-slate-900' : 'font-medium text-slate-800'
+                      }`}
+                      title={paper.title}
                     >
-                      <Pencil className="w-3 h-3" />
-                    </button>
-                    <button
-                      type="button"
-                      title="删除论文"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onRequestDeletePaper(paper);
-                      }}
-                      className="p-1 rounded hover:bg-red-100 text-slate-500 hover:text-red-600"
-                    >
-                      <Trash2 className="w-3 h-3" />
-                    </button>
+                      {paper.title}
+                    </h4>
                   </div>
+                  {!batchMode && (
+                    <div className="hidden group-hover:flex items-center gap-0.5 shrink-0">
+                      <button
+                        type="button"
+                        title="编辑元数据"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onEditPaper(paper);
+                        }}
+                        className="p-1 rounded hover:bg-slate-200/80 text-slate-500 hover:text-slate-800"
+                      >
+                        <Pencil className="w-3 h-3" />
+                      </button>
+                      <button
+                        type="button"
+                        title="删除论文"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onRequestDeletePaper(paper);
+                        }}
+                        className="p-1 rounded hover:bg-red-100 text-slate-500 hover:text-red-600"
+                      >
+                        <Trash2 className="w-3 h-3" />
+                      </button>
+                    </div>
+                  )}
                 </div>
 
                 <div className="mt-1.5 flex items-center justify-between gap-2 text-[11px] text-slate-500">

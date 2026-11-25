@@ -266,6 +266,10 @@ function registerIpcHandlers(): void {
     await database.deletePaper(paperId, settingsManager.getDataDir());
   });
 
+  ipcMain.handle('papers:deleteMany', async (_event, paperIds: string[]) =>
+    database.deletePapers(paperIds, settingsManager.getDataDir()),
+  );
+
   ipcMain.handle('annotations:list', (_event, paperId: string) => database.listAnnotations(paperId));
 
   ipcMain.handle('annotations:create', (_event, input: CreateAnnotationInput) =>

@@ -7,6 +7,7 @@ import type {
   AnnotationColor,
   CreateAnnotationInput,
   DeleteFolderResult,
+  DeletePapersResult,
   Folder,
   ImportPdfItemResult,
   LibraryOverview,
@@ -676,6 +677,18 @@ export class FoxReaderDatabase {
         : path.join(dataDir, 'snapshots', snap.snapshot_path);
       await fs.promises.rm(snapFullPath, { force: true });
     }
+  }
+
+  public async deletePapers(paperIds: string[], dataDir: string): Promise<DeletePapersResult> {
+    const uniqueIds = Array.from(new Set(paperIds.map((id) => id.trim()).filter(Boolean)));
+    let deletedCount = 0;
+    for (const paperId of uniqueIds) {
+      const existing = this.db.prepare('SELECT id FROM papers WHERE id = ?').get(paperId);
+      if (!existing) continue;
+      await this.deletePaper(paperId, dataDir);
+      deletedCount += 1;
+    }
+    return { deletedCount };
   }
 
   public listAnnotations(paperId: string): Annotation[] {
