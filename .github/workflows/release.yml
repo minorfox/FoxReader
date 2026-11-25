@@ -1,0 +1,73 @@
+name: Release FoxReader
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build (${{ matrix.platform }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            platform: win
+            cmd: npm run dist:win
+          - os: macos-latest
+            platform: mac
+            cmd: npm run dist:mac
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run typecheck & unit tests
+        run: |
+          npm run typecheck
+          npm run test:selection
+          npm run test:db
+
+      - name: Build & package application
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+        run: ${{ matrix.cmd }}
+
+      - name: Generate SHA-256 checksums
+        shell: bash
+        run: |
+          cd release
+          if [ "${{ matrix.platform }}" = "win" ]; then
+            sha256sum *.exe > "SHA256SUMS-${{ matrix.platform }}.txt"
+          else
+            sha256sum *.dmg *.zip > "SHA256SUMS-${{ matrix.platform }}.txt"
+          fi
+          cat "SHA256SUMS-${{ matrix.platform }}.txt"
+
+      - name: Upload release assets
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            release/*.exe
+            release/*.dmg
+            release/*.zip
+            release/SHA256SUMS-*.txt
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

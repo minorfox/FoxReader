@@ -35,6 +35,13 @@ let database: FoxReaderDatabase;
 const dataDirLock = new DataDirLock();
 let currentLockWarning: DataDirLockInfo | null = null;
 
+function getAppIconPath(): string | undefined {
+  const candidate = app.isPackaged
+    ? path.join(process.resourcesPath, 'icon.png')
+    : path.resolve(app.getAppPath(), 'build', 'icon.png');
+  return fs.existsSync(candidate) ? candidate : undefined;
+}
+
 function createMainWindow(): BrowserWindow {
   const preloadPath = path.join(__dirname, '../preload/index.cjs');
   const win = new BrowserWindow({
@@ -43,6 +50,7 @@ function createMainWindow(): BrowserWindow {
     minWidth: 1024,
     minHeight: 640,
     title: 'FoxReader',
+    icon: getAppIconPath(),
     backgroundColor: '#f8fafc',
     webPreferences: {
       preload: preloadPath,

@@ -16,6 +16,7 @@ import {
   X,
 } from 'lucide-react';
 import type { Folder, LibraryView, Paper, PaperStatus, Tag } from '../../shared/types';
+import appIcon from '../assets/icon.png';
 
 const TAG_CHIP_STYLES: Record<string, string> = {
   violet: 'bg-violet-50 text-violet-700 border-violet-200',
@@ -320,9 +321,11 @@ export function LeftSidebar({
       {/* Header */}
       <div className="h-12 px-3 border-b border-slate-200 flex items-center justify-between shrink-0">
         <div className="flex items-center gap-2">
-          <div className="w-6 h-6 rounded-md bg-violet-600 text-white font-bold text-xs flex items-center justify-center shadow-xs">
-            F
-          </div>
+          <img
+            src={appIcon}
+            alt="FoxReader"
+            className="w-6 h-6 rounded-md shadow-xs object-cover"
+          />
           <span className="font-semibold text-sm tracking-tight text-slate-900">FoxReader</span>
         </div>
         <div className="flex items-center gap-1.5">

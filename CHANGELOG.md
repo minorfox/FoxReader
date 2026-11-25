@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-11-25
+
+### Added (Release & Polish)
+
+- Custom stylized fox-reading-paper desktop app icon (`build/icon.png`, `build/icon.ico`, `src/renderer/assets/icon.png`) embedded in Windows/macOS builds and UI header.
+- GitHub Actions automated release workflow (`.github/workflows/release.yml`) building Windows (`.exe`) and macOS (`.dmg`/`.zip`) artifacts with SHA-256 checksums on version tags, plus GitHub Issue templates.
+
 ### Added (M3)
 
 - Per-paper **Markdown summary notes** editor in the right sidebar (`整篇笔记` tab) with Edit/Preview toggle (`react-markdown` + `remark-gfm`) and 500ms debounced auto-save indexed by FTS5.

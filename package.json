@@ -14,7 +14,8 @@
     "test:db": "node scripts/run-db-test.mjs",
     "test:selection": "node scripts/test-selection.mjs",
     "dist:dir": "node scripts/build-electron.mjs && vite build && electron-builder --win --dir",
-    "dist:win": "node scripts/build-electron.mjs && vite build && electron-builder --win"
+    "dist:win": "node scripts/build-electron.mjs && vite build && electron-builder --win",
+    "dist:mac": "node scripts/build-electron.mjs && vite build && electron-builder --mac"
   },
   "build": {
     "appId": "com.minorfox.foxreader",
@@ -30,6 +31,10 @@
       "!node_modules/**/*"
     ],
     "extraResources": [
+      {
+        "from": "build/icon.png",
+        "to": "icon.png"
+      },
       {
         "from": "node_modules/pdfjs-dist/cmaps",
         "to": "pdfjs-dist/cmaps"
@@ -48,6 +53,7 @@
       }
     ],
     "win": {
+      "icon": "build/icon.ico",
       "target": [
         {
           "target": "nsis",
@@ -58,7 +64,22 @@
           "arch": ["x64"]
         }
       ],
-      "signAndEditExecutable": false
+      "signExecutable": false
+    },
+    "mac": {
+      "icon": "build/icon.png",
+      "category": "public.app-category.productivity",
+      "identity": null,
+      "target": [
+        {
+          "target": "dmg",
+          "arch": ["arm64", "x64"]
+        },
+        {
+          "target": "zip",
+          "arch": ["arm64", "x64"]
+        }
+      ]
     },
     "nsis": {
       "oneClick": false,
