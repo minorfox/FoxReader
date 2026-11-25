@@ -366,6 +366,46 @@ We investigate sparse attention mechanisms with KaTeX formula $E = mc^2$ and uni
 
     migratedDb.close();
 
+    // 15. Electron 39 runtime compatibility check for configured pdfjs-dist build (catches missing Chrome 145+ APIs like getOrInsertComputed)
+    const pdfLibSource = fs.readFileSync(path.resolve('src/renderer/lib/pdf.ts'), 'utf-8');
+    const importMatch = pdfLibSource.match(/from\s+['"](pdfjs-dist[^'"]*)['"]/);
+    assert.ok(importMatch?.[1], 'Could not locate pdfjs-dist import in src/renderer/lib/pdf.ts');
+    const pdfSpec = importMatch[1] === 'pdfjs-dist' ? 'pdfjs-dist/build/pdf.mjs' : importMatch[1];
+    const pdfWorkerSpec = pdfSpec.replace(/pdf\.mjs$/, 'pdf.worker.min.mjs');
+    const pdfjsLib = await import(pathToFileURL(path.resolve('node_modules', pdfSpec)).toString());
+    pdfjsLib.GlobalWorkerOptions.workerSrc = pathToFileURL(
+      path.resolve('node_modules', pdfWorkerSpec),
+    ).toString();
+
+    const parts = ['%PDF-1.4\n'];
+    const offsets = [0];
+    const addObj = (id, body) => {
+      offsets[id] = Buffer.byteLength(parts.join(''), 'utf-8');
+      parts.push(`${id} 0 obj\n${body}\nendobj\n`);
+    };
+    addObj(1, '<< /Type /Catalog /Pages 2 0 R >>');
+    addObj(2, '<< /Type /Pages /Kids [3 0 R] /Count 1 >>');
+    addObj(3, '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>');
+    addObj(4, '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>');
+    const streamBody = 'BT /F1 12 Tf 20 150 Td (Hello FoxReader) Tj ET';
+    addObj(5, `<< /Length ${Buffer.byteLength(streamBody, 'utf-8')} >>\nstream\n${streamBody}\nendstream`);
+    const xrefPos = Buffer.byteLength(parts.join(''), 'utf-8');
+    parts.push('xref\n0 6\n0000000000 65535 f \n');
+    for (let i = 1; i <= 5; i += 1) {
+      parts.push(`${String(offsets[i]).padStart(10, '0')} 00000 n \n`);
+    }
+    parts.push(`trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n${xrefPos}\n%%EOF\n`);
+
+    const pdfBytes = new Uint8Array(Buffer.from(parts.join(''), 'utf-8'));
+    const pdfDoc = await pdfjsLib.getDocument({ data: pdfBytes, verbosity: 0 }).promise;
+    const pdfPage = await pdfDoc.getPage(1);
+    const opList = await pdfPage.getOperatorList();
+    const textContent = await pdfPage.getTextContent();
+    assert.ok(Array.isArray(opList.fnArray) && opList.fnArray.length > 0);
+    assert.ok(textContent.items.some((it) => 'str' in it && it.str.includes('Hello')));
+    pdfPage.cleanup();
+    await pdfDoc.destroy();
+
     console.log('ALL_DB_TESTS_PASSED');
   } finally {
     fs.rmSync(tempRoot, { recursive: true, force: true });
