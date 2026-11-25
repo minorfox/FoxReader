@@ -8,7 +8,7 @@
 
 - **纯本地离线运行**：无需账号、不依赖任何云端服务，启动即用。
 - **原文件只读不改写**：托管原始 PDF 副本，所有批注、高亮归一化坐标、备注与 Markdown 笔记均外置存储在结构化本地目录中，避免破坏加密或非标准编码的学术 PDF。
-- **单目录可迁移**：所有数据集中于可自定义路径的 `FoxReaderData/` 目录，放入 OneDrive / 坚果云 / Git 即可完成备份与多机同步。
+- **单目录可迁移（支持 OneDrive 多机接力同步）**：所有数据集中于可自定义路径的 `FoxReaderData/` 目录（仅需同步该目录，无需同步程序源码）；内置 SQLite 单文件 `DELETE` 日志模式与 `.foxreader.lock` 占用锁提示，避免网盘冲突副本。
 - **统一三栏工作台**：左栏论文库与多级文件夹树、中栏连续纵向懒渲染 PDF 阅读视口、右栏批注与笔记面板（左右栏均支持一键折叠）。
 
 ## 数据目录结构
@@ -36,7 +36,7 @@ FoxReaderData/
 - **桌面端框架**：Electron
 - **前端界面**：React + TypeScript + Vite + Tailwind CSS
 - **PDF 渲染**：`pdfjs-dist`
-- **本地数据库**：SQLite（基于 Electron 主进程内置 `node:sqlite`，支持 WAL 与 FTS5，免原生 C++ 编译依赖）
+- **本地数据库**：SQLite（基于 Electron 主进程内置 `node:sqlite`，支持 FTS5 与单文件 `DELETE` 模式，免原生 C++ 编译依赖）
 
 ## 本地开发与构建
 
@@ -49,12 +49,20 @@ npm.cmd install
 # 启动开发环境（Vite + Electron）
 npm.cmd run dev
 
-# 类型检查
+# 运行自动化测试与类型检查
+npm.cmd run test:selection
+npm.cmd run test:db
 npm.cmd run typecheck
 
-# 生产构建
+# 生产构建与 Windows 安装包 / 绿色便携版打包（输出至 release/）
 npm.cmd run build
+npm.cmd run dist:win
 ```
+
+### 多机网盘同步建议（OneDrive / 坚果云）
+
+1. 在各台电脑安装/运行 FoxReader 后，点击左栏右上角设置图标，将「数据目录」均指向网盘内的同一个 `FoxReaderData/` 文件夹。
+2. 遵循「单设备使用完退出并等待网盘同步完成 → 另一台设备再打开」的接力原则；若存在未释放的 `.foxreader.lock`，启动时会自动弹窗提醒。
 
 ## 分支策略
 

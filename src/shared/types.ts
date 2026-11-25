@@ -134,8 +134,15 @@ export interface PaperNote {
   updatedAt: number;
 }
 
+export interface DataDirLockInfo {
+  hostname: string;
+  pid: number;
+  startedAt: number;
+}
+
 export interface AppSettings {
   dataDir: string;
+  lockWarning?: DataDirLockInfo | null;
 }
 
 export interface LibraryOverview {
@@ -144,6 +151,7 @@ export interface LibraryOverview {
   unclassifiedCount: number;
   folderCounts: Record<string, number>;
   tags: Tag[];
+  tagCounts: Record<string, number>;
 }
 
 export interface PaperListQuery {
@@ -193,6 +201,12 @@ export interface FoxReaderApi {
   createAnnotation: (input: CreateAnnotationInput) => Promise<Annotation>;
   updateAnnotation: (id: string, input: UpdateAnnotationInput) => Promise<Annotation>;
   deleteAnnotation: (id: string) => Promise<void>;
+  setPaperTags: (paperId: string, tagNames: string[]) => Promise<Paper>;
+  deleteTag: (tagId: string) => Promise<void>;
+  getPaperNote: (paperId: string) => Promise<PaperNote>;
+  savePaperNote: (paperId: string, contentMd: string) => Promise<PaperNote>;
+  acknowledgeLockWarning: () => Promise<void>;
+  quitApp: () => Promise<void>;
   getPathForFile: (file: File) => string;
 }
 

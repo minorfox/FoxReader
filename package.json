@@ -1,8 +1,9 @@
 {
   "name": "foxreader",
-  "version": "0.1.0-alpha.1",
+  "version": "0.1.0",
   "private": true,
   "description": "Pure-local offline desktop PDF paper manager and reader with out-of-band annotations.",
+  "author": "minorfox",
   "license": "MIT",
   "type": "module",
   "main": "dist-electron/main/index.mjs",
@@ -11,13 +12,67 @@
     "build": "node scripts/build-electron.mjs && vite build",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.node.json --noEmit",
     "test:db": "node scripts/run-db-test.mjs",
-    "test:selection": "node scripts/test-selection.mjs"
+    "test:selection": "node scripts/test-selection.mjs",
+    "dist:dir": "node scripts/build-electron.mjs && vite build && electron-builder --win --dir",
+    "dist:win": "node scripts/build-electron.mjs && vite build && electron-builder --win"
+  },
+  "build": {
+    "appId": "com.minorfox.foxreader",
+    "productName": "FoxReader",
+    "directories": {
+      "output": "release"
+    },
+    "asar": true,
+    "files": [
+      "dist/**/*",
+      "dist-electron/**/*",
+      "package.json",
+      "!node_modules/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "node_modules/pdfjs-dist/cmaps",
+        "to": "pdfjs-dist/cmaps"
+      },
+      {
+        "from": "node_modules/pdfjs-dist/standard_fonts",
+        "to": "pdfjs-dist/standard_fonts"
+      },
+      {
+        "from": "node_modules/pdfjs-dist/wasm",
+        "to": "pdfjs-dist/wasm"
+      },
+      {
+        "from": "node_modules/pdfjs-dist/iccs",
+        "to": "pdfjs-dist/iccs"
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        },
+        {
+          "target": "portable",
+          "arch": ["x64"]
+        }
+      ],
+      "signAndEditExecutable": false
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true
+    }
   },
   "dependencies": {
     "lucide-react": "^0.511.0",
     "pdfjs-dist": "^5.3.31",
     "react": "^19.1.0",
-    "react-dom": "^19.1.0"
+    "react-dom": "^19.1.0",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.1.0",
@@ -26,6 +81,7 @@
     "@types/react-dom": "^19.1.0",
     "@vitejs/plugin-react": "^4.5.0",
     "electron": "^39.8.10",
+    "electron-builder": "^26.18.0",
     "esbuild": "^0.25.0",
     "tailwindcss": "^4.1.0",
     "typescript": "^5.8.3",

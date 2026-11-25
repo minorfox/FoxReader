@@ -1,12 +1,16 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import {
   BookOpen,
   Check,
   Copy,
+  Eye,
   FileText,
   Highlighter,
   Image as ImageIcon,
   MessageSquare,
+  Pencil,
   Trash2,
 } from 'lucide-react';
 import {
@@ -15,6 +19,7 @@ import {
   type Annotation,
   type AnnotationColor,
   type Paper,
+  type PaperNote,
   type UpdateAnnotationInput,
 } from '../../shared/types';
 import { getSnapshotUrl } from '../lib/pdf';
@@ -24,6 +29,7 @@ type KindFilter = 'all' | 'commented' | 'area';
 interface RightSidebarProps {
   selectedPaper: Paper | null;
   annotations: Annotation[];
+  note: PaperNote | null;
   activeTab: 'annotations' | 'notes';
   selectedAnnotationId: string | null;
   cardRevealRequest: { id: string; focusComment: boolean; nonce: number } | null;
@@ -31,6 +37,7 @@ interface RightSidebarProps {
   onJumpToAnnotation: (annotation: Annotation) => void;
   onUpdateAnnotation: (id: string, input: UpdateAnnotationInput) => Promise<void>;
   onDeleteAnnotation: (id: string) => Promise<void>;
+  onSaveNote: (paperId: string, contentMd: string) => Promise<void>;
   onCopyText: (text: string) => void;
 }
 
@@ -241,9 +248,151 @@ function AnnotationCard({
   );
 }
 
+function PaperNoteEditor({
+  paperId,
+  note,
+  onSaveNote,
+}: {
+  paperId: string;
+  note: PaperNote | null;
+  onSaveNote: (paperId: string, contentMd: string) => Promise<void>;
+}) {
+  const [mode, setMode] = useState<'edit' | 'preview'>('edit');
+  const [draft, setDraft] = useState(note?.contentMd ?? '');
+  const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved'>('idle');
+
+  const activePaperIdRef = useRef(paperId);
+  const savedContentRef = useRef(note?.contentMd ?? '');
+  const draftRef = useRef(note?.contentMd ?? '');
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    const incoming = note?.contentMd ?? '';
+    if (activePaperIdRef.current !== paperId) {
+      if (debounceRef.current) {
+        clearTimeout(debounceRef.current);
+        debounceRef.current = null;
+      }
+      if (draftRef.current !== savedContentRef.current) {
+        void onSaveNote(activePaperIdRef.current, draftRef.current);
+      }
+      activePaperIdRef.current = paperId;
+      savedContentRef.current = incoming;
+      draftRef.current = incoming;
+      setDraft(incoming);
+      setSaveState('idle');
+      return;
+    }
+
+    savedContentRef.current = incoming;
+    if (incoming !== draftRef.current && saveState !== 'saving') {
+      draftRef.current = incoming;
+      setDraft(incoming);
+    }
+  }, [paperId, note?.contentMd, onSaveNote, saveState]);
+
+  useEffect(() => {
+    return () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+    };
+  }, []);
+
+  const flush = async (targetPaperId: string, text: string) => {
+    if (debounceRef.current) {
+      clearTimeout(debounceRef.current);
+      debounceRef.current = null;
+    }
+    if (text === savedContentRef.current) return;
+    setSaveState('saving');
+    try {
+      await onSaveNote(targetPaperId, text);
+      if (activePaperIdRef.current === targetPaperId) {
+        savedContentRef.current = text;
+        setSaveState('saved');
+        setTimeout(() => {
+          setSaveState((s) => (s === 'saved' ? 'idle' : s));
+        }, 1600);
+      }
+    } catch {
+      if (activePaperIdRef.current === targetPaperId) setSaveState('idle');
+    }
+  };
+
+  const handleChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    const val = e.target.value;
+    setDraft(val);
+    draftRef.current = val;
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    const currentId = paperId;
+    debounceRef.current = setTimeout(() => {
+      void flush(currentId, val);
+    }, 500);
+  };
+
+  return (
+    <div className="h-full flex flex-col">
+      <div className="px-3 py-2 border-b border-slate-100 flex items-center justify-between gap-2 bg-slate-50/50 shrink-0">
+        <div className="inline-flex rounded-lg border border-slate-200 bg-white p-0.5">
+          <button
+            type="button"
+            onClick={() => setMode('edit')}
+            className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-medium transition ${
+              mode === 'edit' ? 'bg-violet-600 text-white' : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            <Pencil className="w-3 h-3" />
+            编辑
+          </button>
+          <button
+            type="button"
+            onClick={() => setMode('preview')}
+            className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-medium transition ${
+              mode === 'preview' ? 'bg-violet-600 text-white' : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            <Eye className="w-3 h-3" />
+            预览
+          </button>
+        </div>
+
+        <span className="text-[11px] text-slate-400">
+          {saveState === 'saving'
+            ? '保存中...'
+            : saveState === 'saved'
+              ? '已自动保存'
+              : note?.updatedAt
+                ? `更新于 ${new Date(note.updatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
+                : '支持 Markdown'}
+        </span>
+      </div>
+
+      {mode === 'edit' ? (
+        <textarea
+          value={draft}
+          onChange={handleChange}
+          onBlur={() => void flush(paperId, draft)}
+          placeholder={`# 论文总结笔记\n\n- **核心问题**：\n- **方法亮点**：\n- **实验结论**：\n- **局限与启发**：`}
+          className="flex-1 w-full resize-none p-3.5 text-xs leading-relaxed font-mono text-slate-800 placeholder:text-slate-400 focus:outline-none select-text"
+        />
+      ) : (
+        <div className="flex-1 overflow-y-auto p-4 select-text">
+          {draft.trim() ? (
+            <div className="fox-markdown">
+              <ReactMarkdown remarkPlugins={[remarkGfm]}>{draft}</ReactMarkdown>
+            </div>
+          ) : (
+            <div className="text-xs text-slate-400 text-center py-8">暂无笔记内容，切换至「编辑」开始记录。</div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function RightSidebar({
   selectedPaper,
   annotations,
+  note,
   activeTab,
   selectedAnnotationId,
   cardRevealRequest,
@@ -251,6 +400,7 @@ export function RightSidebar({
   onJumpToAnnotation,
   onUpdateAnnotation,
   onDeleteAnnotation,
+  onSaveNote,
   onCopyText,
 }: RightSidebarProps) {
   const [colorFilter, setColorFilter] = useState<AnnotationColor | 'all'>('all');
@@ -362,7 +512,7 @@ export function RightSidebar({
       )}
 
       {/* Body */}
-      <div className="flex-1 overflow-y-auto p-3">
+      <div className={`flex-1 ${activeTab === 'notes' && selectedPaper ? 'overflow-hidden' : 'overflow-y-auto p-3'}`}>
         {!selectedPaper ? (
           <div className="h-full flex flex-col items-center justify-center text-center px-4 text-slate-400">
             <BookOpen className="w-8 h-8 mb-2 opacity-60" />
@@ -396,13 +546,7 @@ export function RightSidebar({
             </div>
           )
         ) : (
-          <div className="rounded-xl border border-dashed border-slate-200 p-5 text-center space-y-2 mt-2">
-            <FileText className="w-6 h-6 mx-auto text-violet-500/80" />
-            <div className="text-xs font-medium text-slate-700">整篇 Markdown 笔记（M3 规划）</div>
-            <p className="text-[11px] text-slate-500 leading-relaxed">
-              M3 里程碑将提供支持编辑/预览切换与 500ms 防抖自动保存的论文总结笔记编辑器，并纳入 FTS5 全局检索。
-            </p>
-          </div>
+          <PaperNoteEditor paperId={selectedPaper.id} note={note} onSaveNote={onSaveNote} />
         )}
       </div>
     </aside>

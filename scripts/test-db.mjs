@@ -8,21 +8,50 @@ import esbuild from 'esbuild';
 async function main() {
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'foxreader-db-test-'));
   const bundlePath = path.join(tempRoot, 'database.mjs');
+  const lockBundlePath = path.join(tempRoot, 'dataLock.mjs');
   const dataDir = path.join(tempRoot, 'FoxReaderData');
 
   try {
-    await esbuild.build({
-      entryPoints: [path.resolve('src/main/database.ts')],
-      outfile: bundlePath,
-      bundle: true,
-      platform: 'node',
-      format: 'esm',
-      target: 'node22',
-      external: ['node:sqlite'],
-    });
+    await Promise.all([
+      esbuild.build({
+        entryPoints: [path.resolve('src/main/database.ts')],
+        outfile: bundlePath,
+        bundle: true,
+        platform: 'node',
+        format: 'esm',
+        target: 'node22',
+        external: ['node:sqlite'],
+      }),
+      esbuild.build({
+        entryPoints: [path.resolve('src/main/dataLock.ts')],
+        outfile: lockBundlePath,
+        bundle: true,
+        platform: 'node',
+        format: 'esm',
+        target: 'node22',
+      }),
+    ]);
 
     const { FoxReaderDatabase } = await import(pathToFileURL(bundlePath).toString());
+    const { DataDirLock } = await import(pathToFileURL(lockBundlePath).toString());
     const db = new FoxReaderDatabase(dataDir);
+    assert.equal(db.getJournalMode().toLowerCase(), 'delete', 'Scenario B requires DELETE journal mode');
+    assert.equal(fs.existsSync(path.join(dataDir, 'library.db-wal')), false, 'No lingering WAL file');
+
+    // DataDirLock test: foreign hostname lock triggers warning; own lock cleans up on release
+    const lockDir = path.join(tempRoot, 'LockTestDir');
+    fs.mkdirSync(lockDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(lockDir, '.foxreader.lock'),
+      JSON.stringify({ hostname: 'OTHER-PC-999', pid: 12345, startedAt: Date.now() }),
+    );
+    const lock = new DataDirLock();
+    const warning = lock.acquire(lockDir);
+    assert.ok(warning && warning.hostname === 'OTHER-PC-999', 'Should warn on foreign hostname lock');
+    lock.forceAcquire(lockDir);
+    assert.equal(fs.existsSync(path.join(lockDir, '.foxreader.lock')), true);
+    lock.release();
+    assert.equal(fs.existsSync(path.join(lockDir, '.foxreader.lock')), false, 'Own lock removed on release');
 
     // 1. Nested folder CRUD: root -> child -> grandchild
     const root = db.createFolder('Computer Science', null);
@@ -159,7 +188,31 @@ async function main() {
     assert.equal(fs.existsSync(snap1Path), false, 'Deleted annotation snapshot PNG should be removed');
     assert.equal(db.listAnnotations(reloadedPaper.id).length, 3);
 
-    // 7. Delete paper -> DB row + managed PDF + remaining annotation snapshots deleted
+    // 7. Tags CRUD, filtering & FTS5 search
+    const withTags = db.setPaperTags(reloadedPaper.id, ['NLP', 'Few-Shot', 'nlp']);
+    assert.equal(withTags.tags.length, 2, 'Duplicate case-insensitive tags should dedupe');
+    const overviewAfterTags = db.getLibraryOverview();
+    const nlpTag = overviewAfterTags.tags.find((t) => t.name === 'NLP');
+    assert.ok(nlpTag);
+    assert.equal(overviewAfterTags.tagCounts[nlpTag.id], 1);
+    assert.equal(db.listPapers({ view: 'all', tagId: nlpTag.id }).length, 1);
+    assert.equal(db.listPapers({ view: 'all', search: 'Few-Shot' }).length, 1);
+
+    db.deleteTag(nlpTag.id);
+    assert.equal(db.getPaperById(reloadedPaper.id).tags.length, 1);
+
+    // 8. Paper Markdown Notes CRUD & FTS5/CJK search
+    const emptyNote = db.getPaperNote(reloadedPaper.id);
+    assert.equal(emptyNote.contentMd, '');
+    const savedNote = db.savePaperNote(
+      reloadedPaper.id,
+      '# Summary\n\nThis paper introduces **Variational Prototype** 学习方法.',
+    );
+    assert.ok(savedNote.updatedAt > 0);
+    assert.equal(db.listPapers({ view: 'all', search: 'Variational' }).length, 1);
+    assert.equal(db.listPapers({ view: 'all', search: '学习方法' }).length, 1);
+
+    // 9. Delete paper -> DB row + managed PDF + remaining annotation snapshots deleted
     await db.deletePaper(reloadedPaper.id, dataDir);
     assert.equal(db.getPaperById(reloadedPaper.id), null);
     assert.equal(fs.existsSync(managedPdfPath), false, 'Managed PDF should be deleted after deletePaper');

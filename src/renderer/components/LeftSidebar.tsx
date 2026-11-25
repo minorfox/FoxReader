@@ -11,10 +11,24 @@ import {
   Plus,
   Search,
   Settings,
+  Tag as TagIcon,
   Trash2,
   X,
 } from 'lucide-react';
-import type { Folder, LibraryView, Paper, PaperStatus } from '../../shared/types';
+import type { Folder, LibraryView, Paper, PaperStatus, Tag } from '../../shared/types';
+
+const TAG_CHIP_STYLES: Record<string, string> = {
+  violet: 'bg-violet-50 text-violet-700 border-violet-200',
+  blue: 'bg-blue-50 text-blue-700 border-blue-200',
+  emerald: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+  rose: 'bg-rose-50 text-rose-700 border-rose-200',
+  amber: 'bg-amber-50 text-amber-800 border-amber-200',
+  cyan: 'bg-cyan-50 text-cyan-700 border-cyan-200',
+};
+
+function getTagChipClass(color: string): string {
+  return TAG_CHIP_STYLES[color] ?? TAG_CHIP_STYLES.violet;
+}
 
 const STATUS_LABEL: Record<PaperStatus, string> = {
   unread: '未读',
@@ -51,15 +65,20 @@ function buildFolderTree(folders: Folder[]): FolderNode[] {
 interface LeftSidebarProps {
   folders: Folder[];
   folderCounts: Record<string, number>;
+  tags: Tag[];
+  tagCounts: Record<string, number>;
   totalCount: number;
   unclassifiedCount: number;
   papers: Paper[];
   activeView: LibraryView;
   activeFolderId: string | null;
+  activeTagId: string | null;
   statusFilter: PaperStatus | 'all';
   searchQuery: string;
   selectedPaperId: string | null;
   onSelectView: (view: LibraryView, folderId?: string | null) => void;
+  onSelectTag: (tagId: string | null) => void;
+  onDeleteTag: (tag: Tag) => void;
   onChangeStatusFilter: (status: PaperStatus | 'all') => void;
   onChangeSearch: (query: string) => void;
   onSelectPaper: (paperId: string) => void;
@@ -77,15 +96,20 @@ interface LeftSidebarProps {
 export function LeftSidebar({
   folders,
   folderCounts,
+  tags,
+  tagCounts,
   totalCount,
   unclassifiedCount,
   papers,
   activeView,
   activeFolderId,
+  activeTagId,
   statusFilter,
   searchQuery,
   selectedPaperId,
   onSelectView,
+  onSelectTag,
+  onDeleteTag,
   onChangeStatusFilter,
   onChangeSearch,
   onSelectPaper,
@@ -419,6 +443,59 @@ export function LeftSidebar({
         ) : (
           folderTree.map((node) => renderFolderNode(node, 0))
         )}
+
+        {tags.length > 0 && (
+          <div className="pt-2.5 px-2 space-y-1.5">
+            <div className="flex items-center justify-between">
+              <span className="inline-flex items-center gap-1 text-[11px] font-medium text-slate-400 uppercase tracking-wider">
+                <TagIcon className="w-3 h-3" />
+                标签筛选
+              </span>
+              {activeTagId && (
+                <button
+                  type="button"
+                  onClick={() => onSelectTag(null)}
+                  className="text-[10px] text-violet-600 hover:underline"
+                >
+                  清除
+                </button>
+              )}
+            </div>
+            <div className="flex flex-wrap gap-1 pb-1">
+              {tags.map((tag) => {
+                const isSelected = activeTagId === tag.id;
+                const count = tagCounts[tag.id] ?? 0;
+                return (
+                  <div
+                    key={tag.id}
+                    className={`group inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] cursor-pointer transition ${
+                      isSelected
+                        ? 'bg-violet-600 text-white border-violet-600'
+                        : `${getTagChipClass(tag.color)} hover:brightness-95`
+                    }`}
+                    onClick={() => onSelectTag(isSelected ? null : tag.id)}
+                  >
+                    <span>#{tag.name}</span>
+                    <span className={`text-[10px] tabular-nums ${isSelected ? 'text-violet-100' : 'opacity-65'}`}>
+                      {count}
+                    </span>
+                    <button
+                      type="button"
+                      title="删除标签"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onDeleteTag(tag);
+                      }}
+                      className="hidden group-hover:inline-flex items-center justify-center rounded-full hover:bg-black/15 p-0.5"
+                    >
+                      <X className="w-2.5 h-2.5" />
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Status Filter */}
@@ -516,6 +593,19 @@ export function LeftSidebar({
                     </span>
                   </div>
                 </div>
+
+                {paper.tags.length > 0 && (
+                  <div className="mt-1.5 flex flex-wrap gap-1">
+                    {paper.tags.map((tag) => (
+                      <span
+                        key={tag.id}
+                        className={`inline-flex items-center rounded border px-1.5 py-0 text-[10px] ${getTagChipClass(tag.color)}`}
+                      >
+                        #{tag.name}
+                      </span>
+                    ))}
+                  </div>
+                )}
               </div>
             );
           })

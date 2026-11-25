@@ -13,11 +13,14 @@ import type {
   NormalizedRect,
   Paper,
   PaperListQuery,
+  PaperNote,
   PaperStatus,
   Tag,
   UpdateAnnotationInput,
   UpdatePaperMetadataInput,
 } from '../shared/types.js';
+
+const TAG_PALETTE = ['violet', 'blue', 'emerald', 'rose', 'amber', 'cyan'] as const;
 
 const VALID_ANNOTATION_COLORS = new Set<AnnotationColor>([
   'yellow',
@@ -152,12 +155,23 @@ export class FoxReaderDatabase {
     this.dbPath = path.join(dataDir, 'library.db');
     this.db = new DatabaseSync(this.dbPath);
     this.db.exec('PRAGMA foreign_keys = ON;');
-    this.db.exec('PRAGMA journal_mode = WAL;');
+    // Flush any prior WAL journal from earlier versions and stick to single-file DELETE mode for safe OneDrive sync
+    this.db.exec('PRAGMA wal_checkpoint(TRUNCATE);');
+    this.db.exec('PRAGMA journal_mode = DELETE;');
     this.initSchema();
   }
 
+  public getJournalMode(): string {
+    const row = this.db.prepare('PRAGMA journal_mode').get() as { journal_mode: string };
+    return row.journal_mode;
+  }
+
   public close(): void {
-    this.db.close();
+    try {
+      this.db.close();
+    } catch {
+      // Ignore double-close during app shutdown
+    }
   }
 
   private initSchema(): void {
@@ -346,6 +360,13 @@ export class FoxReaderDatabase {
     const tags = this.db
       .prepare('SELECT id, name, color FROM tags ORDER BY name COLLATE NOCASE ASC')
       .all() as unknown as TagRow[];
+    const tagCountRows = this.db
+      .prepare('SELECT tag_id, COUNT(*) AS cnt FROM paper_tags GROUP BY tag_id')
+      .all() as { tag_id: string; cnt: number }[];
+    const tagCounts: Record<string, number> = {};
+    for (const row of tagCountRows) {
+      tagCounts[row.tag_id] = row.cnt;
+    }
 
     return {
       folders,
@@ -353,6 +374,7 @@ export class FoxReaderDatabase {
       unclassifiedCount: unclassifiedRow.cnt,
       folderCounts,
       tags: tags.map((t) => ({ id: t.id, name: t.name, color: t.color })),
+      tagCounts,
     };
   }
 
@@ -777,5 +799,105 @@ export class FoxReaderDatabase {
         : path.join(dataDir, 'snapshots', existing.snapshot_path);
       await fs.promises.rm(snapFullPath, { force: true });
     }
+  }
+
+  public setPaperTags(paperId: string, tagNames: string[]): Paper {
+    const paperExists = this.db.prepare('SELECT id FROM papers WHERE id = ?').get(paperId);
+    if (!paperExists) {
+      throw new Error('Paper not found.');
+    }
+
+    const dedupedNames: string[] = [];
+    const seenLower = new Set<string>();
+    for (const raw of tagNames) {
+      const clean = raw.trim();
+      if (!clean) continue;
+      const key = clean.toLowerCase();
+      if (seenLower.has(key)) continue;
+      seenLower.add(key);
+      dedupedNames.push(clean);
+    }
+
+    this.runInTransaction(() => {
+      this.db.prepare('DELETE FROM paper_tags WHERE paper_id = ?').run(paperId);
+
+      const countRow = this.db.prepare('SELECT COUNT(*) AS cnt FROM tags').get() as { cnt: number };
+      let colorCursor = countRow.cnt;
+
+      for (const name of dedupedNames) {
+        let tag = this.db
+          .prepare('SELECT id FROM tags WHERE name = ? COLLATE NOCASE')
+          .get(name) as { id: string } | undefined;
+        if (!tag) {
+          const newId = crypto.randomUUID();
+          const color = TAG_PALETTE[colorCursor % TAG_PALETTE.length];
+          colorCursor += 1;
+          this.db
+            .prepare('INSERT INTO tags (id, name, color) VALUES (?, ?, ?)')
+            .run(newId, name, color);
+          tag = { id: newId };
+        }
+        this.db
+          .prepare('INSERT OR IGNORE INTO paper_tags (paper_id, tag_id) VALUES (?, ?)')
+          .run(paperId, tag.id);
+      }
+
+      this.db.prepare('UPDATE papers SET updated_at = ? WHERE id = ?').run(Date.now(), paperId);
+      this.syncPaperSearchIndex(paperId);
+    });
+
+    const updated = this.getPaperById(paperId);
+    if (!updated) {
+      throw new Error('Failed to load paper after updating tags.');
+    }
+    return updated;
+  }
+
+  public deleteTag(tagId: string): void {
+    this.runInTransaction(() => {
+      const affected = this.db
+        .prepare('SELECT paper_id FROM paper_tags WHERE tag_id = ?')
+        .all(tagId) as { paper_id: string }[];
+      this.db.prepare('DELETE FROM tags WHERE id = ?').run(tagId);
+      for (const row of affected) {
+        this.syncPaperSearchIndex(row.paper_id);
+      }
+    });
+  }
+
+  public getPaperNote(paperId: string): PaperNote {
+    const row = this.db
+      .prepare('SELECT paper_id, content_md, updated_at FROM paper_notes WHERE paper_id = ?')
+      .get(paperId) as { paper_id: string; content_md: string; updated_at: number } | undefined;
+    if (!row) {
+      return { paperId, contentMd: '', updatedAt: 0 };
+    }
+    return {
+      paperId: row.paper_id,
+      contentMd: row.content_md,
+      updatedAt: row.updated_at,
+    };
+  }
+
+  public savePaperNote(paperId: string, contentMd: string): PaperNote {
+    const paperExists = this.db.prepare('SELECT id FROM papers WHERE id = ?').get(paperId);
+    if (!paperExists) {
+      throw new Error('Paper not found.');
+    }
+    const updatedAt = Date.now();
+    this.runInTransaction(() => {
+      this.db
+        .prepare(
+          `INSERT INTO paper_notes (paper_id, content_md, updated_at)
+           VALUES (?, ?, ?)
+           ON CONFLICT(paper_id) DO UPDATE SET
+             content_md = excluded.content_md,
+             updated_at = excluded.updated_at`,
+        )
+        .run(paperId, contentMd, updatedAt);
+      this.syncPaperSearchIndex(paperId);
+    });
+
+    return { paperId, contentMd, updatedAt };
   }
 }

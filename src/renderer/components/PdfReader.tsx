@@ -3,8 +3,10 @@ import type { PDFDocumentProxy } from 'pdfjs-dist';
 import {
   BookOpenCheck,
   Check,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
+  ChevronUp,
   Copy,
   FileUp,
   Highlighter,
@@ -14,8 +16,10 @@ import {
   PanelLeftOpen,
   PanelRightClose,
   PanelRightOpen,
+  Search,
   SquareDashedMousePointer,
   Trash2,
+  X,
   ZoomIn,
   ZoomOut,
 } from 'lucide-react';
@@ -48,6 +52,16 @@ interface AnnotationPopoverState {
 }
 
 const ZOOM_PRESETS = [0.5, 0.75, 1.0, 1.25, 1.5, 2.0];
+
+function buildSearchRegex(query: string): RegExp | null {
+  const parts = query
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((p) => p.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+  if (parts.length === 0) return null;
+  return new RegExp(parts.join('\\s*'), 'gi');
+}
 
 interface PdfReaderProps {
   paper: Paper | null;
@@ -119,6 +133,16 @@ export function PdfReader({
   const [popover, setPopover] = useState<AnnotationPopoverState | null>(null);
   const [pulsingAnnotationId, setPulsingAnnotationId] = useState<string | null>(null);
 
+  // In-page Ctrl+F search state
+  const [findOpen, setFindOpen] = useState(false);
+  const [findInput, setFindInput] = useState('');
+  const [findQuery, setFindQuery] = useState('');
+  const [findMatches, setFindMatches] = useState<Array<{ pageNumber: number; matchIndexInPage: number }>>([]);
+  const [activeMatchIdx, setActiveMatchIdx] = useState(0);
+  const [findSearching, setFindSearching] = useState(false);
+  const findInputRef = useRef<HTMLInputElement | null>(null);
+  const pageTextCacheRef = useRef<Map<number, string>>(new Map());
+
   const visibleRatiosRef = useRef<Map<number, number>>(new Map());
   const pendingInitialJumpRef = useRef<number | null>(null);
 
@@ -185,6 +209,12 @@ export function PdfReader({
     setSelectionBar(null);
     setPopover(null);
     setPulsingAnnotationId(null);
+    setFindOpen(false);
+    setFindInput('');
+    setFindQuery('');
+    setFindMatches([]);
+    setActiveMatchIdx(0);
+    pageTextCacheRef.current.clear();
 
     if (!paper) {
       setPdfDoc(null);
@@ -441,6 +471,107 @@ export function PdfReader({
 
   const totalPages = pdfDoc?.numPages ?? 0;
 
+  // Global Ctrl+F shortcut to open in-page PDF search
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'f') {
+        if (!paper || !pdfDoc) return;
+        e.preventDefault();
+        setFindOpen(true);
+        requestAnimationFrame(() => {
+          findInputRef.current?.focus();
+          findInputRef.current?.select();
+        });
+      } else if (e.key === 'Escape' && findOpen) {
+        setFindOpen(false);
+        setFindQuery('');
+        setFindMatches([]);
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [paper, pdfDoc, findOpen]);
+
+  // Debounce findInput -> findQuery
+  useEffect(() => {
+    if (!findOpen) return;
+    const timer = setTimeout(() => {
+      setFindQuery(findInput.trim());
+    }, 180);
+    return () => clearTimeout(timer);
+  }, [findInput, findOpen]);
+
+  // Scan all pages in the active PDF document for matches
+  useEffect(() => {
+    if (!pdfDoc || !findOpen || !findQuery) {
+      setFindMatches([]);
+      setActiveMatchIdx(0);
+      setFindSearching(false);
+      return;
+    }
+
+    let cancelled = false;
+    setFindSearching(true);
+
+    async function runSearch() {
+      if (!pdfDoc) return;
+      const regex = buildSearchRegex(findQuery);
+      if (!regex) {
+        setFindMatches([]);
+        setFindSearching(false);
+        return;
+      }
+
+      const matches: Array<{ pageNumber: number; matchIndexInPage: number }> = [];
+      for (let p = 1; p <= pdfDoc.numPages; p++) {
+        if (cancelled) return;
+        let text = pageTextCacheRef.current.get(p);
+        if (text === undefined) {
+          const page = await pdfDoc.getPage(p);
+          if (cancelled) return;
+          const tc = await page.getTextContent();
+          text = tc.items.map((item) => ('str' in item ? item.str : '')).join('');
+          pageTextCacheRef.current.set(p, text);
+        }
+        regex.lastIndex = 0;
+        let pageMatchIdx = 0;
+        let m = regex.exec(text);
+        while (m !== null) {
+          if (m[0].length === 0) {
+            regex.lastIndex += 1;
+          } else {
+            matches.push({ pageNumber: p, matchIndexInPage: pageMatchIdx });
+            pageMatchIdx += 1;
+          }
+          m = regex.exec(text);
+        }
+      }
+
+      if (cancelled) return;
+      setFindMatches(matches);
+      setActiveMatchIdx(0);
+      setFindSearching(false);
+      if (matches.length > 0) {
+        scrollToPage(matches[0].pageNumber, 'smooth');
+      }
+    }
+
+    void runSearch();
+    return () => {
+      cancelled = true;
+    };
+  }, [pdfDoc, findOpen, findQuery, scrollToPage]);
+
+  const stepSearchMatch = (delta: number) => {
+    if (findMatches.length === 0) return;
+    const nextIdx = (activeMatchIdx + delta + findMatches.length) % findMatches.length;
+    setActiveMatchIdx(nextIdx);
+    const match = findMatches[nextIdx];
+    scrollToPage(match.pageNumber, 'smooth');
+  };
+
+  const activeMatch = findMatches[activeMatchIdx] ?? null;
+
   return (
     <main className="flex-1 min-w-0 bg-slate-100 flex flex-col h-full relative">
       {/* Top Toolbar */}
@@ -551,37 +682,58 @@ export function PdfReader({
           </div>
         )}
 
-        {/* Right Controls: Annotation Mode + Right Sidebar Toggle */}
+        {/* Right Controls: Annotation Mode + Search + Right Sidebar Toggle */}
         <div className="flex items-center gap-2 shrink-0">
           {paper && (
-            <div className="hidden md:flex items-center rounded-lg border border-slate-200 bg-slate-50 p-0.5">
+            <>
+              <div className="hidden md:flex items-center rounded-lg border border-slate-200 bg-slate-50 p-0.5">
+                <button
+                  type="button"
+                  onClick={() => setAnnotationMode('text')}
+                  title="文本划选模式（按住 Alt + 拖拽可快速区域框选）"
+                  className={`inline-flex items-center gap-1 px-2 py-1 rounded text-[11px] font-medium transition ${
+                    annotationMode === 'text'
+                      ? 'bg-white text-slate-900 shadow-2xs'
+                      : 'text-slate-500 hover:text-slate-800'
+                  }`}
+                >
+                  <Highlighter className="w-3 h-3" />
+                  划选
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setAnnotationMode('area')}
+                  title="区域框选模式：拖拽框选公式或图表并截取 PNG 缩略图"
+                  className={`inline-flex items-center gap-1 px-2 py-1 rounded text-[11px] font-medium transition ${
+                    annotationMode === 'area'
+                      ? 'bg-white text-violet-700 shadow-2xs'
+                      : 'text-slate-500 hover:text-slate-800'
+                  }`}
+                >
+                  <SquareDashedMousePointer className="w-3 h-3" />
+                  框选
+                </button>
+              </div>
+
               <button
                 type="button"
-                onClick={() => setAnnotationMode('text')}
-                title="文本划选模式（按住 Alt + 拖拽可快速区域框选）"
-                className={`inline-flex items-center gap-1 px-2 py-1 rounded text-[11px] font-medium transition ${
-                  annotationMode === 'text'
-                    ? 'bg-white text-slate-900 shadow-2xs'
-                    : 'text-slate-500 hover:text-slate-800'
+                onClick={() => {
+                  setFindOpen(true);
+                  requestAnimationFrame(() => {
+                    findInputRef.current?.focus();
+                    findInputRef.current?.select();
+                  });
+                }}
+                title="页内查找 (Ctrl+F)"
+                className={`p-1.5 rounded-md transition ${
+                  findOpen
+                    ? 'bg-violet-50 text-violet-700'
+                    : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
                 }`}
               >
-                <Highlighter className="w-3 h-3" />
-                划选
+                <Search className="w-4 h-4" />
               </button>
-              <button
-                type="button"
-                onClick={() => setAnnotationMode('area')}
-                title="区域框选模式：拖拽框选公式或图表并截取 PNG 缩略图"
-                className={`inline-flex items-center gap-1 px-2 py-1 rounded text-[11px] font-medium transition ${
-                  annotationMode === 'area'
-                    ? 'bg-white text-violet-700 shadow-2xs'
-                    : 'text-slate-500 hover:text-slate-800'
-                }`}
-              >
-                <SquareDashedMousePointer className="w-3 h-3" />
-                框选
-              </button>
-            </div>
+            </>
           )}
 
           <button
@@ -673,6 +825,12 @@ export function PdfReader({
                   annotations={annotationsByPage.get(pageNum) ?? []}
                   selectedAnnotationId={selectedAnnotationId}
                   pulsingAnnotationId={pulsingAnnotationId}
+                  searchQuery={findOpen ? findQuery : ''}
+                  activeSearchMatchIndex={
+                    findOpen && activeMatch && activeMatch.pageNumber === pageNum
+                      ? activeMatch.matchIndexInPage
+                      : -1
+                  }
                   registerElement={registerElement}
                   onTextSelection={handleTextSelection}
                   onCreateAreaAnnotation={onCreateAreaAnnotation}
@@ -683,6 +841,70 @@ export function PdfReader({
           </div>
         ) : null}
       </div>
+
+      {/* Floating Ctrl+F Search Bar */}
+      {paper && findOpen && (
+        <div className="absolute top-14 right-6 z-40 flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-2.5 py-1.5 shadow-lg">
+          <Search className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+          <input
+            ref={findInputRef}
+            type="text"
+            value={findInput}
+            onChange={(e) => setFindInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                stepSearchMatch(e.shiftKey ? -1 : 1);
+              } else if (e.key === 'Escape') {
+                setFindOpen(false);
+                setFindQuery('');
+                setFindMatches([]);
+              }
+            }}
+            placeholder="页内查找..."
+            className="w-44 text-xs text-slate-800 placeholder:text-slate-400 focus:outline-none"
+          />
+          <span className="text-[11px] text-slate-400 tabular-nums min-w-[44px] text-right">
+            {findSearching
+              ? '查找中'
+              : findQuery
+                ? findMatches.length > 0
+                  ? `${activeMatchIdx + 1}/${findMatches.length}`
+                  : '0/0'
+                : ''}
+          </span>
+          <button
+            type="button"
+            disabled={findMatches.length === 0}
+            onClick={() => stepSearchMatch(-1)}
+            title="上一个 (Shift+Enter)"
+            className="p-1 rounded text-slate-500 hover:bg-slate-100 disabled:opacity-35 transition"
+          >
+            <ChevronUp className="w-3.5 h-3.5" />
+          </button>
+          <button
+            type="button"
+            disabled={findMatches.length === 0}
+            onClick={() => stepSearchMatch(1)}
+            title="下一个 (Enter)"
+            className="p-1 rounded text-slate-500 hover:bg-slate-100 disabled:opacity-35 transition"
+          >
+            <ChevronDown className="w-3.5 h-3.5" />
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setFindOpen(false);
+              setFindQuery('');
+              setFindMatches([]);
+            }}
+            title="关闭 (Esc)"
+            className="p-1 rounded text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
 
       {/* Floating Selection Toolbar */}
       {selectionBar && (

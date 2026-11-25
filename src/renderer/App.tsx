@@ -2,13 +2,16 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import type {
   Annotation,
   AnnotationColor,
+  DataDirLockInfo,
   Folder,
   ImportPdfItemResult,
   LibraryOverview,
   LibraryView,
   NormalizedRect,
   Paper,
+  PaperNote,
   PaperStatus,
+  Tag,
   UpdateAnnotationInput,
   UpdatePaperMetadataInput,
 } from '../shared/types';
@@ -18,6 +21,7 @@ import { PdfReader } from './components/PdfReader';
 import { RightSidebar } from './components/RightSidebar';
 import {
   ConfirmModal,
+  LockWarningModal,
   MetadataModal,
   SettingsModal,
   ToastContainer,
@@ -36,17 +40,20 @@ function sortAnnotations(items: Annotation[]): Annotation[] {
 
 export function App() {
   const [dataDir, setDataDir] = useState('');
+  const [lockWarning, setLockWarning] = useState<DataDirLockInfo | null>(null);
   const [overview, setOverview] = useState<LibraryOverview>({
     folders: [],
     totalCount: 0,
     unclassifiedCount: 0,
     folderCounts: {},
     tags: [],
+    tagCounts: {},
   });
   const [papers, setPapers] = useState<Paper[]>([]);
 
   const [activeView, setActiveView] = useState<LibraryView>('all');
   const [activeFolderId, setActiveFolderId] = useState<string | null>(null);
+  const [activeTagId, setActiveTagId] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<PaperStatus | 'all'>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
@@ -55,8 +62,9 @@ export function App() {
   const [leftCollapsed, setLeftCollapsed] = useState(false);
   const [rightCollapsed, setRightCollapsed] = useState(false);
 
-  // M2 Annotation state
+  // M2 & M3 Annotation / Note state
   const [annotations, setAnnotations] = useState<Annotation[]>([]);
+  const [paperNote, setPaperNote] = useState<PaperNote | null>(null);
   const [activeColor, setActiveColor] = useState<AnnotationColor>('yellow');
   const [rightTab, setRightTab] = useState<'annotations' | 'notes'>('annotations');
   const [selectedAnnotationId, setSelectedAnnotationId] = useState<string | null>(null);
@@ -70,6 +78,7 @@ export function App() {
   const [editingPaper, setEditingPaper] = useState<Paper | null>(null);
   const [confirmDeleteFolder, setConfirmDeleteFolder] = useState<Folder | null>(null);
   const [confirmDeletePaper, setConfirmDeletePaper] = useState<Paper | null>(null);
+  const [confirmDeleteTag, setConfirmDeleteTag] = useState<Tag | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [windowFileDragOver, setWindowFileDragOver] = useState(false);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
@@ -100,18 +109,22 @@ export function App() {
     const next = await window.foxreader.listPapers({
       view: activeView,
       folderId: activeFolderId,
+      tagId: activeTagId,
       status: statusFilter,
       search: debouncedSearch,
     });
     setPapers(next);
-  }, [activeView, activeFolderId, statusFilter, debouncedSearch]);
+  }, [activeView, activeFolderId, activeTagId, statusFilter, debouncedSearch]);
 
   const refreshAll = useCallback(async () => {
     await Promise.all([refreshOverview(), refreshPapers()]);
   }, [refreshOverview, refreshPapers]);
 
   useEffect(() => {
-    void window.foxreader.getSettings().then((s) => setDataDir(s.dataDir));
+    void window.foxreader.getSettings().then((s) => {
+      setDataDir(s.dataDir);
+      setLockWarning(s.lockWarning ?? null);
+    });
     void refreshOverview();
   }, [refreshOverview]);
 
@@ -124,18 +137,25 @@ export function App() {
     [papers, selectedPaperId],
   );
 
-  // Load annotations whenever selectedPaperId changes
+  // Load annotations & Markdown note whenever selectedPaperId changes
   useEffect(() => {
     setSelectedAnnotationId(null);
     setCardRevealRequest(null);
     setJumpRequest(null);
     if (!selectedPaperId) {
       setAnnotations([]);
+      setPaperNote(null);
       return;
     }
     let cancelled = false;
-    void window.foxreader.listAnnotations(selectedPaperId).then((items) => {
-      if (!cancelled) setAnnotations(items);
+    void Promise.all([
+      window.foxreader.listAnnotations(selectedPaperId),
+      window.foxreader.getPaperNote(selectedPaperId),
+    ]).then(([annItems, noteItem]) => {
+      if (!cancelled) {
+        setAnnotations(annItems);
+        setPaperNote(noteItem);
+      }
     });
     return () => {
       cancelled = true;
@@ -255,16 +275,33 @@ export function App() {
     );
   };
 
+  const handleConfirmDeleteTag = async () => {
+    if (!confirmDeleteTag) return;
+    const target = confirmDeleteTag;
+    setConfirmDeleteTag(null);
+    await window.foxreader.deleteTag(target.id);
+    if (activeTagId === target.id) {
+      setActiveTagId(null);
+    }
+    await refreshAll();
+    pushToast('info', `已删除标签「#${target.name}」`);
+  };
+
   const handleMovePaperToFolder = async (paperId: string, folderId: string | null) => {
     await window.foxreader.movePaperToFolder(paperId, folderId);
     await refreshAll();
     pushToast('success', folderId ? '已移动论文到目标文件夹' : '已移至「未分类」');
   };
 
-  const handleSaveMetadata = async (paperId: string, input: UpdatePaperMetadataInput) => {
+  const handleSaveMetadata = async (
+    paperId: string,
+    input: UpdatePaperMetadataInput,
+    tagNames: string[],
+  ) => {
     await window.foxreader.updatePaperMetadata(paperId, input);
+    await window.foxreader.setPaperTags(paperId, tagNames);
     await refreshAll();
-    pushToast('success', '论文元数据已更新');
+    pushToast('success', '论文元数据与标签已更新');
   };
 
   const handleConfirmDeletePaper = async () => {
@@ -294,11 +331,22 @@ export function App() {
     const updated = await window.foxreader.selectDataDir();
     if (!updated) return;
     setDataDir(updated.dataDir);
+    setLockWarning(updated.lockWarning ?? null);
     setSelectedPaperId(null);
     setActiveView('all');
     setActiveFolderId(null);
+    setActiveTagId(null);
     await refreshAll();
     pushToast('success', `数据目录已切换至：${updated.dataDir}`);
+  };
+
+  const handleAcknowledgeLockWarning = async () => {
+    await window.foxreader.acknowledgeLockWarning();
+    setLockWarning(null);
+  };
+
+  const handleQuitApp = async () => {
+    await window.foxreader.quitApp();
   };
 
   // M2 Annotation Handlers
@@ -379,6 +427,19 @@ export function App() {
     [pushToast],
   );
 
+  const handleSaveNote = useCallback(
+    async (paperId: string, contentMd: string) => {
+      const saved = await window.foxreader.savePaperNote(paperId, contentMd);
+      if (paperId === selectedPaperId) {
+        setPaperNote(saved);
+      }
+      if (debouncedSearch.trim().length > 0) {
+        await refreshPapers();
+      }
+    },
+    [selectedPaperId, debouncedSearch, refreshPapers],
+  );
+
   const handleSelectAnnotationFromPdf = useCallback((annotation: Annotation) => {
     setSelectedAnnotationId(annotation.id);
     setRightCollapsed(false);
@@ -436,11 +497,14 @@ export function App() {
         <LeftSidebar
           folders={overview.folders}
           folderCounts={overview.folderCounts}
+          tags={overview.tags}
+          tagCounts={overview.tagCounts}
           totalCount={overview.totalCount}
           unclassifiedCount={overview.unclassifiedCount}
           papers={papers}
           activeView={activeView}
           activeFolderId={activeFolderId}
+          activeTagId={activeTagId}
           statusFilter={statusFilter}
           searchQuery={searchQuery}
           selectedPaperId={selectedPaperId}
@@ -448,6 +512,8 @@ export function App() {
             setActiveView(view);
             setActiveFolderId(folderId);
           }}
+          onSelectTag={setActiveTagId}
+          onDeleteTag={setConfirmDeleteTag}
           onChangeStatusFilter={setStatusFilter}
           onChangeSearch={setSearchQuery}
           onSelectPaper={setSelectedPaperId}
@@ -488,6 +554,7 @@ export function App() {
         <RightSidebar
           selectedPaper={selectedPaper}
           annotations={annotations}
+          note={paperNote}
           activeTab={rightTab}
           selectedAnnotationId={selectedAnnotationId}
           cardRevealRequest={cardRevealRequest}
@@ -495,6 +562,7 @@ export function App() {
           onJumpToAnnotation={handleJumpToAnnotation}
           onUpdateAnnotation={handleUpdateAnnotation}
           onDeleteAnnotation={handleDeleteAnnotation}
+          onSaveNote={handleSaveNote}
           onCopyText={handleCopyText}
         />
       )}
@@ -510,6 +578,7 @@ export function App() {
       <MetadataModal
         paper={editingPaper}
         folders={overview.folders}
+        availableTags={overview.tags}
         onClose={() => setEditingPaper(null)}
         onSave={handleSaveMetadata}
       />
@@ -526,6 +595,20 @@ export function App() {
         }
         onCancel={() => setConfirmDeleteFolder(null)}
         onConfirm={() => void handleConfirmDeleteFolder()}
+      />
+
+      <ConfirmModal
+        open={confirmDeleteTag !== null}
+        title="确认删除标签"
+        danger
+        confirmLabel="删除标签"
+        message={
+          confirmDeleteTag
+            ? `确定要删除标签「#${confirmDeleteTag.name}」吗？\n\n仅会移除论文与该标签的关联，不会影响论文文件与批注。`
+            : ''
+        }
+        onCancel={() => setConfirmDeleteTag(null)}
+        onConfirm={() => void handleConfirmDeleteTag()}
       />
 
       <ConfirmModal
@@ -548,6 +631,12 @@ export function App() {
         onClose={() => setSettingsOpen(false)}
         onSelectDataDir={handleSelectDataDir}
         onOpenDataDir={() => window.foxreader.openDataDir()}
+      />
+
+      <LockWarningModal
+        lockInfo={lockWarning}
+        onAcknowledge={handleAcknowledgeLockWarning}
+        onQuit={handleQuitApp}
       />
 
       <ToastContainer toasts={toasts} onDismiss={dismissToast} />

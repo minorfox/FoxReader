@@ -34,6 +34,14 @@ const api: FoxReaderApi = {
   updateAnnotation: (id: string, input: UpdateAnnotationInput) =>
     ipcRenderer.invoke('annotations:update', id, input),
   deleteAnnotation: (id: string) => ipcRenderer.invoke('annotations:delete', id),
+  setPaperTags: (paperId: string, tagNames: string[]) =>
+    ipcRenderer.invoke('tags:setPaperTags', paperId, tagNames),
+  deleteTag: (tagId: string) => ipcRenderer.invoke('tags:delete', tagId),
+  getPaperNote: (paperId: string) => ipcRenderer.invoke('notes:get', paperId),
+  savePaperNote: (paperId: string, contentMd: string) =>
+    ipcRenderer.invoke('notes:save', paperId, contentMd),
+  acknowledgeLockWarning: () => ipcRenderer.invoke('app:acknowledgeLockWarning'),
+  quitApp: () => ipcRenderer.invoke('app:quit'),
   getPathForFile: (file: File) => webUtils.getPathForFile(file),
 };
 

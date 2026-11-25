@@ -3,10 +3,12 @@ import path from 'node:path';
 import { dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { app, BrowserWindow, dialog, ipcMain, net, protocol, shell } from 'electron';
+import { DataDirLock } from './dataLock.js';
 import { FoxReaderDatabase } from './database.js';
 import { SettingsManager } from './settings.js';
 import type {
   CreateAnnotationInput,
+  DataDirLockInfo,
   PaperListQuery,
   UpdateAnnotationInput,
   UpdatePaperMetadataInput,
@@ -30,6 +32,8 @@ protocol.registerSchemesAsPrivileged([
 let mainWindow: BrowserWindow | null = null;
 let settingsManager: SettingsManager;
 let database: FoxReaderDatabase;
+const dataDirLock = new DataDirLock();
+let currentLockWarning: DataDirLockInfo | null = null;
 
 function createMainWindow(): BrowserWindow {
   const preloadPath = path.join(__dirname, '../preload/index.cjs');
@@ -65,6 +69,10 @@ function createMainWindow(): BrowserWindow {
 }
 
 function getPdfjsDistRoot(): string {
+  if (app.isPackaged) {
+    const fromResources = path.resolve(process.resourcesPath, 'pdfjs-dist');
+    if (fs.existsSync(fromResources)) return fromResources;
+  }
   const fromApp = path.resolve(app.getAppPath(), 'node_modules', 'pdfjs-dist');
   if (fs.existsSync(fromApp)) return fromApp;
   return path.resolve(__dirname, '../../node_modules/pdfjs-dist');
@@ -147,7 +155,21 @@ function registerFoxPdfProtocol(): void {
 }
 
 function registerIpcHandlers(): void {
-  ipcMain.handle('app:getSettings', () => settingsManager.getSettings());
+  ipcMain.handle('app:getSettings', () => ({
+    ...settingsManager.getSettings(),
+    lockWarning: currentLockWarning,
+  }));
+
+  ipcMain.handle('app:acknowledgeLockWarning', () => {
+    dataDirLock.forceAcquire(settingsManager.getDataDir());
+    currentLockWarning = null;
+  });
+
+  ipcMain.handle('app:quit', () => {
+    dataDirLock.release();
+    database?.close();
+    app.quit();
+  });
 
   ipcMain.handle('app:selectDataDir', async () => {
     const dialogOpts = {
@@ -163,12 +185,14 @@ function registerIpcHandlers(): void {
     }
     const nextDir = result.filePaths[0];
     if (path.resolve(nextDir) === path.resolve(settingsManager.getDataDir())) {
-      return settingsManager.getSettings();
+      return { ...settingsManager.getSettings(), lockWarning: currentLockWarning };
     }
-    const updated = settingsManager.setDataDir(nextDir);
+    dataDirLock.release();
     database.close();
+    const updated = settingsManager.setDataDir(nextDir);
+    currentLockWarning = dataDirLock.acquire(updated.dataDir);
     database = new FoxReaderDatabase(updated.dataDir);
-    return updated;
+    return { ...updated, lockWarning: currentLockWarning };
   });
 
   ipcMain.handle('app:openDataDir', async () => {
@@ -247,11 +271,25 @@ function registerIpcHandlers(): void {
   ipcMain.handle('annotations:delete', (_event, id: string) =>
     database.deleteAnnotation(id, settingsManager.getDataDir()),
   );
+
+  ipcMain.handle('tags:setPaperTags', (_event, paperId: string, tagNames: string[]) =>
+    database.setPaperTags(paperId, tagNames),
+  );
+
+  ipcMain.handle('tags:delete', (_event, tagId: string) => database.deleteTag(tagId));
+
+  ipcMain.handle('notes:get', (_event, paperId: string) => database.getPaperNote(paperId));
+
+  ipcMain.handle('notes:save', (_event, paperId: string, contentMd: string) =>
+    database.savePaperNote(paperId, contentMd),
+  );
 }
 
 app.whenReady().then(() => {
   settingsManager = new SettingsManager(app.getPath('userData'));
-  database = new FoxReaderDatabase(settingsManager.getDataDir());
+  const dataDir = settingsManager.getDataDir();
+  currentLockWarning = dataDirLock.acquire(dataDir);
+  database = new FoxReaderDatabase(dataDir);
 
   registerFoxPdfProtocol();
   registerIpcHandlers();
@@ -264,8 +302,14 @@ app.whenReady().then(() => {
   });
 });
 
+app.on('before-quit', () => {
+  dataDirLock.release();
+  database?.close();
+});
+
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
+    dataDirLock.release();
     database?.close();
     app.quit();
   }

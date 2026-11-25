@@ -6,7 +6,22 @@ import {
   type NormalizedRect,
 } from '../../shared/types';
 import { pdfjsLib } from '../lib/pdf';
-import { cropCanvasRegionToPngBase64, extractSelectionForPage } from '../lib/selection';
+import {
+  cleanAndNormalizeRects,
+  cropCanvasRegionToPngBase64,
+  extractSelectionForPage,
+  type RawRect,
+} from '../lib/selection';
+
+function buildSearchRegex(query: string): RegExp | null {
+  const parts = query
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((p) => p.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+  if (parts.length === 0) return null;
+  return new RegExp(parts.join('\\s*'), 'gi');
+}
 
 interface PdfPageCanvasProps {
   pdfDoc: PDFDocumentProxy;
@@ -19,6 +34,8 @@ interface PdfPageCanvasProps {
   annotations: Annotation[];
   selectedAnnotationId: string | null;
   pulsingAnnotationId: string | null;
+  searchQuery?: string;
+  activeSearchMatchIndex?: number;
   registerElement: (pageNumber: number, el: HTMLDivElement | null) => void;
   onTextSelection: (payload: {
     pageNumber: number;
@@ -53,6 +70,8 @@ export function PdfPageCanvas({
   annotations,
   selectedAnnotationId,
   pulsingAnnotationId,
+  searchQuery = '',
+  activeSearchMatchIndex = -1,
   registerElement,
   onTextSelection,
   onCreateAreaAnnotation,
@@ -61,11 +80,16 @@ export function PdfPageCanvas({
   const containerRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const textLayerRef = useRef<HTMLDivElement | null>(null);
+  const activeSearchElRef = useRef<HTMLDivElement | null>(null);
   const justDraggedRef = useRef(false);
 
   const [renderError, setRenderError] = useState<string | null>(null);
   const [hoveredAnnotationId, setHoveredAnnotationId] = useState<string | null>(null);
   const [dragBox, setDragBox] = useState<NormalizedRect | null>(null);
+  const [textLayerReadyTick, setTextLayerReadyTick] = useState(0);
+  const [searchHighlights, setSearchHighlights] = useState<
+    Array<{ rects: NormalizedRect[]; isActive: boolean }>
+  >([]);
 
   const displayWidth = Math.max(1, Math.round(baseWidth * zoom));
   const displayHeight = Math.max(1, Math.round(baseHeight * zoom));
@@ -130,6 +154,9 @@ export function PdfPageCanvas({
           viewport,
         });
         await textLayerInstance.render();
+        if (!cancelled) {
+          setTextLayerReadyTick((t) => t + 1);
+        }
       } catch (err) {
         const name = err instanceof Error ? err.name : '';
         if (name !== 'RenderingCancelledException' && name !== 'AbortException') {
@@ -149,6 +176,101 @@ export function PdfPageCanvas({
       textLayerInstance?.cancel();
     };
   }, [pdfDoc, pageNumber, zoom, shouldRender]);
+
+  // Compute in-page Ctrl+F search highlight rectangles without mutating TextLayer spans
+  useEffect(() => {
+    const pageEl = containerRef.current;
+    const textLayerEl = textLayerRef.current;
+    const regex = buildSearchRegex(searchQuery);
+    if (!shouldRender || !pageEl || !textLayerEl || !regex) {
+      setSearchHighlights([]);
+      return;
+    }
+
+    const pageBox = pageEl.getBoundingClientRect();
+    if (pageBox.width <= 0 || pageBox.height <= 0) {
+      setSearchHighlights([]);
+      return;
+    }
+
+    const segments: Array<{ node: Text; start: number; end: number }> = [];
+    let fullText = '';
+    const walker = document.createTreeWalker(textLayerEl, NodeFilter.SHOW_TEXT);
+    let currentNode = walker.nextNode();
+    while (currentNode) {
+      const textNode = currentNode as Text;
+      const parentEl = textNode.parentElement;
+      if (!parentEl?.closest('.endOfContent')) {
+        const val = textNode.nodeValue ?? '';
+        if (val.length > 0) {
+          const start = fullText.length;
+          fullText += val;
+          segments.push({ node: textNode, start, end: fullText.length });
+        }
+      }
+      currentNode = walker.nextNode();
+    }
+
+    if (!fullText) {
+      setSearchHighlights([]);
+      return;
+    }
+
+    const findPos = (offset: number): { node: Text; offset: number } | null => {
+      for (const seg of segments) {
+        if (offset >= seg.start && offset <= seg.end) {
+          return { node: seg.node, offset: offset - seg.start };
+        }
+      }
+      return null;
+    };
+
+    const nextHighlights: Array<{ rects: NormalizedRect[]; isActive: boolean }> = [];
+    let matchIdx = 0;
+    let m: RegExpExecArray | null = regex.exec(fullText);
+    while (m !== null) {
+      if (m[0].length === 0) {
+        regex.lastIndex += 1;
+        m = regex.exec(fullText);
+        continue;
+      }
+      const startPos = findPos(m.index);
+      const endPos = findPos(m.index + m[0].length);
+      if (startPos && endPos) {
+        const range = document.createRange();
+        range.setStart(startPos.node, startPos.offset);
+        range.setEnd(endPos.node, endPos.offset);
+        const rawRects: RawRect[] = Array.from(range.getClientRects()).map((r) => ({
+          left: r.left,
+          top: r.top,
+          right: r.right,
+          bottom: r.bottom,
+        }));
+        const normRects = cleanAndNormalizeRects(rawRects, {
+          left: pageBox.left,
+          top: pageBox.top,
+          width: pageBox.width,
+          height: pageBox.height,
+        });
+        if (normRects.length > 0) {
+          nextHighlights.push({
+            rects: normRects,
+            isActive: matchIdx === activeSearchMatchIndex,
+          });
+          matchIdx += 1;
+        }
+      }
+      m = regex.exec(fullText);
+    }
+
+    setSearchHighlights(nextHighlights);
+  }, [searchQuery, activeSearchMatchIndex, textLayerReadyTick, shouldRender, zoom]);
+
+  useEffect(() => {
+    if (activeSearchMatchIndex >= 0 && activeSearchElRef.current) {
+      activeSearchElRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+  }, [activeSearchMatchIndex, searchHighlights]);
 
   const findHitAnnotation = (clientX: number, clientY: number): Annotation | null => {
     const el = containerRef.current;
@@ -369,6 +491,26 @@ export function PdfPageCanvas({
             );
           });
         })}
+
+        {searchHighlights.map((item, matchIdx) =>
+          item.rects.map((rect, rIdx) => (
+            <div
+              key={`search-${matchIdx}-${rIdx}`}
+              ref={item.isActive && rIdx === 0 ? activeSearchElRef : undefined}
+              style={{
+                left: `${rect.x * 100}%`,
+                top: `${rect.y * 100}%`,
+                width: `${rect.w * 100}%`,
+                height: `${rect.h * 100}%`,
+                backgroundColor: item.isActive
+                  ? 'rgba(139, 92, 246, 0.38)'
+                  : 'rgba(251, 146, 60, 0.32)',
+                outline: item.isActive ? '2px solid #7C3AED' : undefined,
+              }}
+              className={`absolute rounded-[2px] ${item.isActive ? 'fox-annotation-pulse' : ''}`}
+            />
+          )),
+        )}
 
         {dragBox && (
           <div
