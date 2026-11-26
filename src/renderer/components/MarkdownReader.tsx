@@ -154,9 +154,11 @@ export function MarkdownReader({
   onRelinkPaperFile,
 }: MarkdownReaderProps) {
   const articleRef = useRef<HTMLDivElement | null>(null);
+  const scrollContainerRef = useRef<HTMLDivElement | null>(null);
   const findInputRef = useRef<HTMLInputElement | null>(null);
   const searchMarksRef = useRef<HTMLElement[]>([]);
   const translateReqIdRef = useRef(0);
+  const autoMarkedReadPaperIdRef = useRef<string | null>(null);
 
   const [rawContent, setRawContent] = useState('');
   const [loading, setLoading] = useState(true);
@@ -180,6 +182,10 @@ export function MarkdownReader({
   useEffect(() => {
     let cancelled = false;
     translateReqIdRef.current += 1;
+    autoMarkedReadPaperIdRef.current = null;
+    if (scrollContainerRef.current) {
+      scrollContainerRef.current.scrollTop = 0;
+    }
     setLoading(true);
     setLoadError(null);
     setFileStatus(null);
@@ -220,6 +226,50 @@ export function MarkdownReader({
   }, [paper.id, paper.sha256, reloadNonce, retryNonce]);
 
   const bodyMarkdown = useMemo(() => stripYamlFrontmatter(rawContent), [rawContent]);
+
+  const markReadIfAtBottom = useCallback(() => {
+    if (
+      loading ||
+      loadError ||
+      paper.status !== 'reading' ||
+      autoMarkedReadPaperIdRef.current === paper.id
+    ) {
+      return;
+    }
+    const el = scrollContainerRef.current;
+    if (!el) return;
+    if (el.scrollTop + el.clientHeight >= el.scrollHeight - 48) {
+      autoMarkedReadPaperIdRef.current = paper.id;
+      void onChangePaperStatus(paper.id, 'read');
+    }
+  }, [paper.id, paper.status, loading, loadError, onChangePaperStatus]);
+
+  useEffect(() => {
+    if (
+      loading ||
+      loadError ||
+      paper.status !== 'reading' ||
+      autoMarkedReadPaperIdRef.current === paper.id
+    ) {
+      return;
+    }
+    let timerId: ReturnType<typeof setTimeout> | null = null;
+    const rafId = requestAnimationFrame(() => {
+      const el = scrollContainerRef.current;
+      if (!el) return;
+      if (el.scrollHeight <= el.clientHeight + 48) {
+        timerId = setTimeout(() => {
+          markReadIfAtBottom();
+        }, 1500);
+      } else if (el.scrollTop > 0 && el.scrollTop + el.clientHeight >= el.scrollHeight - 48) {
+        markReadIfAtBottom();
+      }
+    });
+    return () => {
+      cancelAnimationFrame(rafId);
+      if (timerId !== null) clearTimeout(timerId);
+    };
+  }, [paper.id, paper.status, loading, loadError, rawContent, fontScale, markReadIfAtBottom]);
 
   const renderedArticle = useMemo(
     () => (
@@ -414,7 +464,7 @@ export function MarkdownReader({
         <div className="flex items-center gap-2 shrink-0">
           <button
             type="button"
-            title="点击切换阅读状态"
+            title="点击切换阅读状态（滚至文末自动标为已读）"
             onClick={() => void onChangePaperStatus(paper.id, NEXT_STATUS[paper.status])}
             className={`px-2 py-1 rounded-md border text-[11px] font-medium transition ${STATUS_STYLE[paper.status]}`}
           >
@@ -494,7 +544,11 @@ export function MarkdownReader({
       </header>
 
       {/* Scrollable Document Area */}
-      <div className="flex-1 overflow-y-auto px-6 py-6">
+      <div
+        ref={scrollContainerRef}
+        onScroll={markReadIfAtBottom}
+        className="flex-1 overflow-y-auto px-6 py-6"
+      >
         {loading ? (
           <div className="h-full flex items-center justify-center gap-2 text-sm text-slate-500">
             <Loader2 className="w-4 h-4 animate-spin text-violet-600" />

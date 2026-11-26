@@ -22,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Markdown documents in `MarkdownReader` now automatically transition from `在读` to `已读` when scrolled to the bottom (or after a brief dwell for single-screen documents).
 - Parent folders now aggregate recursive paper counts from all descendant subfolders and list descendant papers when selected.
 
 ## [0.2.3] - 2026-11-26
