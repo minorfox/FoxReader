@@ -170,7 +170,22 @@ export interface PaperListQuery {
 export interface ImportPdfItemResult {
   sourcePath: string;
   status: 'imported' | 'duplicate' | 'error';
+  repaired?: boolean;
   paper?: Paper;
+  error?: string;
+}
+
+export type PaperFileHealth = 'ok' | 'missing' | 'icloud-placeholder' | 'empty' | 'unreadable';
+
+export interface PaperFileStatus {
+  status: PaperFileHealth;
+  expectedPath: string;
+  fileName: string;
+}
+
+export interface RelinkPaperFileResult {
+  ok: boolean;
+  canceled?: boolean;
   error?: string;
 }
 
@@ -264,7 +279,7 @@ export function normalizeTextForTranslation(raw: string): string {
 export interface FoxReaderApi {
   getSettings: () => Promise<AppSettings>;
   selectDataDir: () => Promise<AppSettings | null>;
-  openDataDir: () => Promise<void>;
+  openDataDir: (subDir?: 'pdfs' | 'docs' | 'snapshots') => Promise<void>;
   checkForUpdates: () => Promise<UpdateCheckResult>;
   downloadUpdate: (input: DownloadUpdateInput) => Promise<UpdateDownloadState>;
   cancelUpdateDownload: () => Promise<void>;
@@ -282,6 +297,8 @@ export interface FoxReaderApi {
   enrichPaperOnline: (input: EnrichPaperOnlineInput) => Promise<EnrichPaperOnlineResult>;
   translateText: (text: string) => Promise<TranslateTextResult>;
   readMarkdownContent: (sha256: string) => Promise<string>;
+  checkPaperFileStatus: (paperId: string) => Promise<PaperFileStatus>;
+  relinkPaperFile: (paperId: string) => Promise<RelinkPaperFileResult>;
   movePaperToFolder: (paperId: string, folderId: string | null) => Promise<Paper>;
   updatePaperProgress: (paperId: string, lastPage: number, lastZoom: number) => Promise<void>;
   deletePaper: (paperId: string) => Promise<void>;

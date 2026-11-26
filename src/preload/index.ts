@@ -13,7 +13,8 @@ import type {
 const api: FoxReaderApi = {
   getSettings: () => ipcRenderer.invoke('app:getSettings'),
   selectDataDir: () => ipcRenderer.invoke('app:selectDataDir'),
-  openDataDir: () => ipcRenderer.invoke('app:openDataDir'),
+  openDataDir: (subDir?: 'pdfs' | 'docs' | 'snapshots') =>
+    ipcRenderer.invoke('app:openDataDir', subDir),
   checkForUpdates: () => ipcRenderer.invoke('app:checkUpdate'),
   downloadUpdate: (input: DownloadUpdateInput) => ipcRenderer.invoke('app:downloadUpdate', input),
   cancelUpdateDownload: () => ipcRenderer.invoke('app:cancelUpdateDownload'),
@@ -45,6 +46,8 @@ const api: FoxReaderApi = {
     ipcRenderer.invoke('papers:enrichOnline', input),
   translateText: (text: string) => ipcRenderer.invoke('translate:text', text),
   readMarkdownContent: (sha256: string) => ipcRenderer.invoke('papers:readMarkdown', sha256),
+  checkPaperFileStatus: (paperId: string) => ipcRenderer.invoke('papers:checkFileStatus', paperId),
+  relinkPaperFile: (paperId: string) => ipcRenderer.invoke('papers:relinkFile', paperId),
   movePaperToFolder: (paperId: string, folderId: string | null) =>
     ipcRenderer.invoke('papers:moveToFolder', paperId, folderId),
   updatePaperProgress: (paperId: string, lastPage: number, lastZoom: number) =>

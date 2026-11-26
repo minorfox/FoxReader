@@ -13,10 +13,12 @@ import type {
   LibraryOverview,
   NormalizedRect,
   Paper,
+  PaperFileStatus,
   PaperFileType,
   PaperListQuery,
   PaperNote,
   PaperStatus,
+  RelinkPaperFileResult,
   Tag,
   UpdateAnnotationInput,
   UpdatePaperMetadataInput,
@@ -145,6 +147,38 @@ function computeFileSha256(filePath: string): Promise<string> {
     stream.on('end', () => resolve(hash.digest('hex')));
     stream.on('error', reject);
   });
+}
+
+async function isManagedFileHealthy(filePath: string): Promise<boolean> {
+  try {
+    const st = await fs.promises.stat(filePath);
+    return st.isFile() && st.size > 0;
+  } catch {
+    return false;
+  }
+}
+
+async function copyFileAtomically(
+  sourcePath: string,
+  destPath: string,
+  expectedSize: number,
+): Promise<void> {
+  await fs.promises.mkdir(path.dirname(destPath), { recursive: true });
+  const tmpPath = `${destPath}.${process.pid}.${Date.now()}.tmp`;
+  try {
+    await fs.promises.copyFile(sourcePath, tmpPath);
+    const tmpStat = await fs.promises.stat(tmpPath);
+    if (tmpStat.size !== expectedSize) {
+      throw new Error(`Copied file size mismatch (expected ${expectedSize}, got ${tmpStat.size}).`);
+    }
+    if (fs.existsSync(destPath)) {
+      await fs.promises.rm(destPath, { force: true });
+    }
+    await fs.promises.rename(tmpPath, destPath);
+  } catch (err) {
+    await fs.promises.rm(tmpPath, { force: true }).catch(() => undefined);
+    throw err;
+  }
 }
 
 function parseMarkdownHeader(
@@ -677,6 +711,14 @@ export class FoxReaderDatabase {
       const sha256 = await computeFileSha256(sourcePath);
       const existing = this.getPaperBySha256(sha256);
       if (existing) {
+        const managedPath =
+          existing.fileType === 'md'
+            ? path.join(dataDir, 'docs', `${existing.sha256}.md`)
+            : path.join(dataDir, 'pdfs', `${existing.sha256}.pdf`);
+        if (stat.size > 0 && !(await isManagedFileHealthy(managedPath))) {
+          await copyFileAtomically(sourcePath, managedPath, stat.size);
+          return { sourcePath, status: 'duplicate', repaired: true, paper: existing };
+        }
         return { sourcePath, status: 'duplicate', paper: existing };
       }
 
@@ -697,18 +739,14 @@ export class FoxReaderDatabase {
       let initialYear: number | null = null;
 
       if (fileType === 'pdf') {
-        const pdfsDir = path.join(dataDir, 'pdfs');
-        await fs.promises.mkdir(pdfsDir, { recursive: true });
-        const destPath = path.join(pdfsDir, `${sha256}.pdf`);
-        if (!fs.existsSync(destPath)) {
-          await fs.promises.copyFile(sourcePath, destPath);
+        const destPath = path.join(dataDir, 'pdfs', `${sha256}.pdf`);
+        if (!(await isManagedFileHealthy(destPath))) {
+          await copyFileAtomically(sourcePath, destPath, stat.size);
         }
       } else {
-        const docsDir = path.join(dataDir, 'docs');
-        await fs.promises.mkdir(docsDir, { recursive: true });
-        const destPath = path.join(docsDir, `${sha256}.md`);
-        if (!fs.existsSync(destPath)) {
-          await fs.promises.copyFile(sourcePath, destPath);
+        const destPath = path.join(dataDir, 'docs', `${sha256}.md`);
+        if (!(await isManagedFileHealthy(destPath))) {
+          await copyFileAtomically(sourcePath, destPath, stat.size);
         }
         const mdRaw = await fs.promises.readFile(destPath, 'utf-8');
         const parsed = parseMarkdownHeader(mdRaw, fallbackTitle);
@@ -826,6 +864,70 @@ export class FoxReaderDatabase {
     }
     const mdPath = path.join(dataDir, 'docs', `${sha256}.md`);
     return fs.promises.readFile(mdPath, 'utf-8');
+  }
+
+  public async checkPaperFileStatus(paperId: string, dataDir: string): Promise<PaperFileStatus> {
+    const paper = this.getPaperById(paperId);
+    if (!paper) {
+      return { status: 'missing', expectedPath: '', fileName: '' };
+    }
+    const subDir = paper.fileType === 'md' ? 'docs' : 'pdfs';
+    const ext = paper.fileType === 'md' ? '.md' : '.pdf';
+    const fileName = `${paper.sha256}${ext}`;
+    const expectedPath = path.join(dataDir, subDir, fileName);
+
+    try {
+      const st = await fs.promises.stat(expectedPath);
+      if (st.size === 0) {
+        return { status: 'empty', expectedPath, fileName };
+      }
+      return { status: 'ok', expectedPath, fileName };
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException)?.code === 'ENOENT') {
+        const icloudPlaceholder = path.join(dataDir, subDir, `.${fileName}.icloud`);
+        if (fs.existsSync(icloudPlaceholder)) {
+          return { status: 'icloud-placeholder', expectedPath, fileName };
+        }
+        return { status: 'missing', expectedPath, fileName };
+      }
+      return { status: 'unreadable', expectedPath, fileName };
+    }
+  }
+
+  public async relinkPaperFile(
+    paperId: string,
+    sourcePath: string,
+    dataDir: string,
+  ): Promise<RelinkPaperFileResult> {
+    const paper = this.getPaperById(paperId);
+    if (!paper) {
+      return { ok: false, error: '未找到对应的文献记录。' };
+    }
+
+    let stat: fs.Stats;
+    try {
+      stat = await fs.promises.stat(sourcePath);
+    } catch {
+      return { ok: false, error: '无法读取所选文件。' };
+    }
+    if (!stat.isFile()) {
+      return { ok: false, error: '所选路径不是有效文件。' };
+    }
+
+    const pickedSha256 = await computeFileSha256(sourcePath);
+    if (pickedSha256 !== paper.sha256) {
+      return {
+        ok: false,
+        error: '所选文件与原文献内容不一致（SHA-256 不匹配）。请确认选择的是同一份原文件，或删除该条目后重新导入。',
+      };
+    }
+
+    const destPath =
+      paper.fileType === 'md'
+        ? path.join(dataDir, 'docs', `${paper.sha256}.md`)
+        : path.join(dataDir, 'pdfs', `${paper.sha256}.pdf`);
+    await copyFileAtomically(sourcePath, destPath, stat.size);
+    return { ok: true };
   }
 
   public async deletePaper(paperId: string, dataDir: string): Promise<void> {

@@ -31,9 +31,11 @@ import {
   type AnnotationColor,
   type NormalizedRect,
   type Paper,
+  type PaperFileStatus,
   type PaperStatus,
   type TranslateTextResult,
 } from '../../shared/types';
+import { DocumentLoadErrorCard } from './DocumentLoadErrorCard';
 
 const STATUS_LABEL: Record<PaperStatus, string> = {
   unread: '未读',
@@ -122,6 +124,9 @@ interface PdfReaderProps {
   onSelectAnnotationFromPdf: (annotation: Annotation) => void;
   onCopyText: (text: string) => void;
   onChangePaperStatus: (paperId: string, status: PaperStatus) => Promise<void>;
+  reloadNonce?: number;
+  onOpenPdfsDir: () => void;
+  onRelinkPaperFile: (paperId: string) => Promise<void>;
 }
 
 export function PdfReader({
@@ -144,6 +149,9 @@ export function PdfReader({
   onSelectAnnotationFromPdf,
   onCopyText,
   onChangePaperStatus,
+  reloadNonce = 0,
+  onOpenPdfsDir,
+  onRelinkPaperFile,
 }: PdfReaderProps) {
   const scrollContainerRef = useRef<HTMLDivElement | null>(null);
   const pageElementsRef = useRef<Map<number, HTMLDivElement>>(new Map());
@@ -152,6 +160,9 @@ export function PdfReader({
   const [pageSizes, setPageSizes] = useState<PageSize[]>([]);
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [retryNonce, setRetryNonce] = useState(0);
+  const [fileStatus, setFileStatus] = useState<PaperFileStatus | null>(null);
+  const [relinking, setRelinking] = useState(false);
 
   const [currentPage, setCurrentPage] = useState(1);
   const [pageInput, setPageInput] = useState('1');
@@ -275,6 +286,7 @@ export function PdfReader({
       setPdfDoc(null);
       setPageSizes([]);
       setLoadError(null);
+      setFileStatus(null);
       setLoading(false);
       return;
     }
@@ -287,6 +299,7 @@ export function PdfReader({
 
     setLoading(true);
     setLoadError(null);
+    setFileStatus(null);
     setPdfDoc(null);
     setPageSizes([]);
     setFitWidth(false);
@@ -331,6 +344,14 @@ export function PdfReader({
         if (!cancelled) {
           setLoading(false);
           setLoadError(err instanceof Error ? err.message : 'PDF 加载失败');
+          void window.foxreader
+            .checkPaperFileStatus(paperId)
+            .then((status) => {
+              if (!cancelled) {
+                setFileStatus(status);
+              }
+            })
+            .catch(() => undefined);
         }
       }
     }
@@ -344,7 +365,7 @@ export function PdfReader({
         void loadedDoc.destroy().catch(() => undefined);
       }
     };
-  }, [paper?.id, paper?.sha256]);
+  }, [paper?.id, paper?.sha256, reloadNonce, retryNonce]);
 
   // Compute effective zoom when Fit-to-Width is enabled
   const effectiveZoom = useMemo(() => {
@@ -912,9 +933,18 @@ export function PdfReader({
           </div>
         ) : loadError ? (
           <div className="h-full flex items-center justify-center">
-            <div className="rounded-xl bg-red-50 border border-red-200 px-5 py-4 text-xs text-red-700 max-w-md">
-              无法渲染该 PDF：{loadError}
-            </div>
+            <DocumentLoadErrorCard
+              fileType="pdf"
+              loadError={loadError}
+              fileStatus={fileStatus}
+              relinking={relinking}
+              onRetry={() => setRetryNonce((n) => n + 1)}
+              onOpenDir={onOpenPdfsDir}
+              onRelink={() => {
+                setRelinking(true);
+                void onRelinkPaperFile(paper.id).finally(() => setRelinking(false));
+              }}
+            />
           </div>
         ) : pdfDoc ? (
           <div className="flex flex-col items-center gap-4 pb-12">

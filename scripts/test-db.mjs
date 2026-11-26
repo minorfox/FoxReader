@@ -406,6 +406,71 @@ We investigate sparse attention mechanisms with KaTeX formula $E = mc^2$ and uni
     pdfPage.cleanup();
     await pdfDoc.destroy();
 
+    // 16. Atomic import copy, file health diagnostics, duplicate-import auto-heal & relink recovery
+    const recoveryDir = path.join(tempRoot, 'RecoveryFoxReaderData');
+    const recoveryDb = new FoxReaderDatabase(recoveryDir);
+    const recoverPdfSrc = path.join(tempRoot, 'recover-sample.pdf');
+    fs.writeFileSync(recoverPdfSrc, '%PDF-1.4\n% Recoverable sample PDF\n%%EOF\n', 'utf-8');
+    const recImport = await recoveryDb.importPdfFile(recoverPdfSrc, null, recoveryDir);
+    assert.equal(recImport.status, 'imported');
+    const recPaper = recImport.paper;
+    assert.ok(recPaper);
+
+    const recPdfsDir = path.join(recoveryDir, 'pdfs');
+    assert.equal(
+      fs.readdirSync(recPdfsDir).some((name) => name.endsWith('.tmp')),
+      false,
+      'Atomic copy should leave no temporary files',
+    );
+    assert.equal((await recoveryDb.checkPaperFileStatus(recPaper.id, recoveryDir)).status, 'ok');
+
+    await recoveryDb.createAnnotation(
+      {
+        paperId: recPaper.id,
+        type: 'text',
+        pageNumber: 1,
+        rects: [{ x: 0.1, y: 0.1, w: 0.2, h: 0.02 }],
+        color: 'yellow',
+        quoteText: 'Preserve me across recovery',
+      },
+      recoveryDir,
+    );
+
+    const recManagedPath = path.join(recPdfsDir, `${recPaper.sha256}.pdf`);
+    fs.rmSync(recManagedPath, { force: true });
+    assert.equal((await recoveryDb.checkPaperFileStatus(recPaper.id, recoveryDir)).status, 'missing');
+
+    const icloudPlaceholderPath = path.join(recPdfsDir, `.${recPaper.sha256}.pdf.icloud`);
+    fs.writeFileSync(icloudPlaceholderPath, 'placeholder', 'utf-8');
+    assert.equal(
+      (await recoveryDb.checkPaperFileStatus(recPaper.id, recoveryDir)).status,
+      'icloud-placeholder',
+    );
+    fs.rmSync(icloudPlaceholderPath, { force: true });
+
+    fs.writeFileSync(recManagedPath, '', 'utf-8');
+    assert.equal((await recoveryDb.checkPaperFileStatus(recPaper.id, recoveryDir)).status, 'empty');
+
+    const healedImport = await recoveryDb.importPdfFile(recoverPdfSrc, null, recoveryDir);
+    assert.equal(healedImport.status, 'duplicate');
+    assert.equal(healedImport.repaired, true);
+    assert.equal(healedImport.paper.id, recPaper.id);
+    assert.equal((await recoveryDb.checkPaperFileStatus(recPaper.id, recoveryDir)).status, 'ok');
+    assert.equal(recoveryDb.listAnnotations(recPaper.id).length, 1);
+
+    fs.rmSync(recManagedPath, { force: true });
+    const wrongPdfSrc = path.join(tempRoot, 'wrong-sample.pdf');
+    fs.writeFileSync(wrongPdfSrc, '%PDF-1.4\n% Different content\n%%EOF\n', 'utf-8');
+    const wrongRelink = await recoveryDb.relinkPaperFile(recPaper.id, wrongPdfSrc, recoveryDir);
+    assert.equal(wrongRelink.ok, false);
+    assert.equal((await recoveryDb.checkPaperFileStatus(recPaper.id, recoveryDir)).status, 'missing');
+
+    const okRelink = await recoveryDb.relinkPaperFile(recPaper.id, recoverPdfSrc, recoveryDir);
+    assert.equal(okRelink.ok, true);
+    assert.equal((await recoveryDb.checkPaperFileStatus(recPaper.id, recoveryDir)).status, 'ok');
+    assert.equal(recoveryDb.listAnnotations(recPaper.id).length, 1);
+    recoveryDb.close();
+
     console.log('ALL_DB_TESTS_PASSED');
   } finally {
     fs.rmSync(tempRoot, { recursive: true, force: true });

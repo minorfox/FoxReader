@@ -20,7 +20,8 @@ import {
   ZoomIn,
   ZoomOut,
 } from 'lucide-react';
-import type { Paper, PaperStatus, TranslateTextResult } from '../../shared/types';
+import type { Paper, PaperFileStatus, PaperStatus, TranslateTextResult } from '../../shared/types';
+import { DocumentLoadErrorCard } from './DocumentLoadErrorCard';
 
 const STATUS_LABEL: Record<PaperStatus, string> = {
   unread: '未读',
@@ -59,6 +60,9 @@ interface MarkdownReaderProps {
   onToggleRight: () => void;
   onCopyText: (text: string) => void;
   onChangePaperStatus: (paperId: string, status: PaperStatus) => Promise<void>;
+  reloadNonce?: number;
+  onOpenDocsDir?: () => void;
+  onRelinkPaperFile?: (paperId: string) => Promise<void>;
 }
 
 function stripYamlFrontmatter(raw: string): string {
@@ -136,6 +140,9 @@ export function MarkdownReader({
   onToggleRight,
   onCopyText,
   onChangePaperStatus,
+  reloadNonce = 0,
+  onOpenDocsDir,
+  onRelinkPaperFile,
 }: MarkdownReaderProps) {
   const articleRef = useRef<HTMLDivElement | null>(null);
   const findInputRef = useRef<HTMLInputElement | null>(null);
@@ -145,6 +152,9 @@ export function MarkdownReader({
   const [rawContent, setRawContent] = useState('');
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [retryNonce, setRetryNonce] = useState(0);
+  const [fileStatus, setFileStatus] = useState<PaperFileStatus | null>(null);
+  const [relinking, setRelinking] = useState(false);
   const [fontScale, setFontScale] = useState(100);
 
   // In-document Ctrl+F search state
@@ -163,6 +173,7 @@ export function MarkdownReader({
     translateReqIdRef.current += 1;
     setLoading(true);
     setLoadError(null);
+    setFileStatus(null);
     setSelectionBar(null);
     setTranslationCard(null);
     setFindOpen(false);
@@ -183,13 +194,21 @@ export function MarkdownReader({
         if (!cancelled) {
           setLoadError(err instanceof Error ? err.message : String(err));
           setLoading(false);
+          void window.foxreader
+            .checkPaperFileStatus(paper.id)
+            .then((status) => {
+              if (!cancelled) {
+                setFileStatus(status);
+              }
+            })
+            .catch(() => undefined);
         }
       });
 
     return () => {
       cancelled = true;
     };
-  }, [paper.id, paper.sha256]);
+  }, [paper.id, paper.sha256, reloadNonce, retryNonce]);
 
   const bodyMarkdown = useMemo(() => stripYamlFrontmatter(rawContent), [rawContent]);
 
@@ -448,8 +467,23 @@ export function MarkdownReader({
             <span>正在加载 Markdown 文档...</span>
           </div>
         ) : loadError ? (
-          <div className="max-w-lg mx-auto mt-12 rounded-xl border border-red-200 bg-white p-5 text-sm text-red-700">
-            加载文档失败：{loadError}
+          <div className="h-full flex items-center justify-center">
+            <DocumentLoadErrorCard
+              fileType="md"
+              loadError={loadError}
+              fileStatus={fileStatus}
+              relinking={relinking}
+              onRetry={() => setRetryNonce((n) => n + 1)}
+              onOpenDir={onOpenDocsDir}
+              onRelink={
+                onRelinkPaperFile
+                  ? () => {
+                      setRelinking(true);
+                      void onRelinkPaperFile(paper.id).finally(() => setRelinking(false));
+                    }
+                  : undefined
+              }
+            />
           </div>
         ) : (
           <article

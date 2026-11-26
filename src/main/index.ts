@@ -362,8 +362,15 @@ function registerIpcHandlers(): void {
     };
   });
 
-  ipcMain.handle('app:openDataDir', async () => {
-    await shell.openPath(settingsManager.getDataDir());
+  const ALLOWED_DATA_SUBDIRS = new Set(['pdfs', 'docs', 'snapshots']);
+  ipcMain.handle('app:openDataDir', async (_event, subDir?: 'pdfs' | 'docs' | 'snapshots') => {
+    const baseDir = settingsManager.getDataDir();
+    const target =
+      subDir && ALLOWED_DATA_SUBDIRS.has(subDir) ? path.join(baseDir, subDir) : baseDir;
+    if (subDir && ALLOWED_DATA_SUBDIRS.has(subDir)) {
+      fs.mkdirSync(target, { recursive: true });
+    }
+    await shell.openPath(target);
   });
 
   ipcMain.handle('app:checkUpdate', () => checkLatestGithubRelease(app.getVersion()));
@@ -444,6 +451,33 @@ function registerIpcHandlers(): void {
   ipcMain.handle('papers:readMarkdown', (_event, sha256: string) =>
     database.readMarkdownContent(sha256, settingsManager.getDataDir()),
   );
+
+  ipcMain.handle('papers:checkFileStatus', (_event, paperId: string) =>
+    database.checkPaperFileStatus(paperId, settingsManager.getDataDir()),
+  );
+
+  ipcMain.handle('papers:relinkFile', async (_event, paperId: string) => {
+    const paper = database.getPaperById(paperId);
+    if (!paper) {
+      return { ok: false, error: '未找到对应的文献记录。' };
+    }
+    const filters =
+      paper.fileType === 'md'
+        ? [{ name: 'Markdown 文件', extensions: ['md', 'markdown'] }]
+        : [{ name: 'PDF 文件', extensions: ['pdf'] }];
+    const dialogOpts = {
+      title: '选择原始文档以重新关联',
+      filters,
+      properties: ['openFile'] as ('openFile')[],
+    };
+    const result = mainWindow
+      ? await dialog.showOpenDialog(mainWindow, dialogOpts)
+      : await dialog.showOpenDialog(dialogOpts);
+    if (result.canceled || result.filePaths.length === 0) {
+      return { ok: false, canceled: true };
+    }
+    return database.relinkPaperFile(paperId, result.filePaths[0], settingsManager.getDataDir());
+  });
 
   ipcMain.handle('papers:updateMetadata', (_event, paperId: string, input: UpdatePaperMetadataInput) =>
     database.updatePaperMetadata(paperId, input),

@@ -89,6 +89,7 @@ export function App() {
   const [confirmDeleteTag, setConfirmDeleteTag] = useState<Tag | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [windowFileDragOver, setWindowFileDragOver] = useState(false);
+  const [readerReloadNonce, setReaderReloadNonce] = useState(0);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
 
   const pushToast = useCallback((kind: ToastMessage['kind'], text: string) => {
@@ -233,6 +234,7 @@ export function App() {
 
       let importedCount = 0;
       let duplicatePaper: Paper | null = null;
+      let repairedPaper: Paper | null = null;
       let firstImportedPaper: Paper | null = null;
       let errorCount = 0;
 
@@ -245,6 +247,9 @@ export function App() {
           }
         } else if (item.status === 'duplicate' && item.paper) {
           duplicatePaper = item.paper;
+          if (item.repaired) {
+            repairedPaper = item.paper;
+          }
         } else if (item.status === 'error') {
           errorCount += 1;
         }
@@ -269,10 +274,16 @@ export function App() {
         setSelectedPaperId(duplicatePaper.id);
       }
 
+      if (repairedPaper) {
+        setReaderReloadNonce((n) => n + 1);
+      }
+
       if (importedCount > 0) {
         pushToast('success', `成功导入 ${importedCount} 篇文档`);
       }
-      if (duplicatePaper && importedCount === 0) {
+      if (repairedPaper) {
+        pushToast('success', `已自动补齐缺失的托管文件：${repairedPaper.title}`);
+      } else if (duplicatePaper && importedCount === 0) {
         pushToast('info', `检测到重复文档（SHA-256 相同），已定位打开：${duplicatePaper.title}`);
       } else if (duplicatePaper) {
         pushToast('info', `部分文件已存在于文档库中（SHA-256 去重跳过）`);
@@ -282,6 +293,20 @@ export function App() {
       }
     },
     [pushToast, refreshAll, refreshPapers],
+  );
+
+  const handleRelinkPaperFile = useCallback(
+    async (paperId: string) => {
+      const res = await window.foxreader.relinkPaperFile(paperId);
+      if (res.canceled) return;
+      if (res.ok) {
+        setReaderReloadNonce((n) => n + 1);
+        pushToast('success', '已重新关联原始文档，正在重新加载');
+      } else {
+        pushToast('warning', res.error || '重新关联失败');
+      }
+    },
+    [pushToast],
   );
 
   const handlePickAndImport = useCallback(
@@ -691,6 +716,9 @@ export function App() {
           onToggleRight={() => setRightCollapsed((p) => !p)}
           onCopyText={handleCopyText}
           onChangePaperStatus={handleChangePaperStatus}
+          reloadNonce={readerReloadNonce}
+          onOpenDocsDir={() => void window.foxreader.openDataDir('docs')}
+          onRelinkPaperFile={handleRelinkPaperFile}
         />
       ) : (
         <PdfReader
@@ -713,6 +741,9 @@ export function App() {
           onSelectAnnotationFromPdf={handleSelectAnnotationFromPdf}
           onCopyText={handleCopyText}
           onChangePaperStatus={handleChangePaperStatus}
+          reloadNonce={readerReloadNonce}
+          onOpenPdfsDir={() => void window.foxreader.openDataDir('pdfs')}
+          onRelinkPaperFile={handleRelinkPaperFile}
         />
       )}
 

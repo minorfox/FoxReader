@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Improved
+
+- Added atomic temporary-file copy during document import to prevent cloud sync clients from picking up half-written files, automatic managed-file repair when re-importing a duplicate paper whose local file is missing/empty, main-process file health diagnostics (`missing`, `.icloud` placeholder, `0`-byte), and 1-click SHA-256-verified original file relinking with retry/open-directory actions in the PDF and Markdown readers.
+
 ## [0.2.3] - 2026-11-26
 
 ### Added
