@@ -7,14 +7,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Fixed
-
-- Windows NSIS in-app silent update now launches the verified installer directly with `--updated /S --force-run` instead of spawning a detached `powershell.exe` helper (which exited early under Windows `DETACHED_PROCESS`), and cleans up temporary update installers on startup.
-
-### Improved
-
-- Restored a 2-row left sidebar top header separating `导入文档` / `设置` from the full-width global search bar.
-
 ## [0.3.0] - 2026-11-26
 
 ### Added
@@ -27,12 +19,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Improved
 
 - Added fullscreen toggle (`Maximize` / `Minimize`, synced live with `F11` and OS fullscreen events) and fallback Settings gear access when the left sidebar is collapsed in `PdfReader`/`MarkdownReader`, decluttered the right-sidebar `文献信息` card header, and added a subtle top window border line.
-- Removed duplicate `FoxReader` branding from the left sidebar and merged the header and global search into a single unified `导入 + 搜索 + 设置` top bar, while syncing the native window title bar dynamically to the active paper title.
+- Removed duplicate `FoxReader` branding from the left sidebar with a clean 2-row header (`导入文档` / `设置` on row 1 and a full-width global search bar on row 2), while syncing the native window title bar dynamically to the active paper title.
 - Removed the native window menu bar on Windows/Linux (`win.removeMenu()` + `Menu.setApplicationMenu(null)`), preventing `Alt+drag` PDF area selection from triggering menu focus while preserving `F11` fullscreen, `Ctrl+,` settings, and `Ctrl+O` import shortcuts; unified data-directory shortcuts (`pdfs/`), update checks, and GitHub link in the sidebar Settings button and `SettingsModal`, while keeping a localized Chinese system menu on macOS.
 - Added atomic temporary-file copy during document import to prevent cloud sync clients from picking up half-written files, automatic managed-file repair when re-importing a duplicate paper whose local file is missing/empty, main-process file health diagnostics (`missing`, `.icloud` placeholder, `0`-byte), and 1-click SHA-256-verified original file relinking with retry/open-directory actions in the PDF and Markdown readers.
 
 ### Fixed
 
+- Windows NSIS in-app silent update now launches the verified installer directly with `--updated /S --force-run` instead of spawning a detached `powershell.exe` helper (which exited early under Windows `DETACHED_PROCESS`), and cleans up temporary update installers on startup.
 - Normalized Windows NSIS and portable `artifactName` in `package.json` (`FoxReader.Setup.${version}.${ext}` / `FoxReader.${version}.${ext}`) so `SHA256SUMS.txt` matches GitHub Release asset filenames, and added space-to-dot fallback normalization in `parseSha256Sums`.
 - Markdown documents in `MarkdownReader` now automatically transition from `在读` to `已读` when scrolled to the bottom (or after a brief dwell for single-screen documents).
 - Parent folders now aggregate recursive paper counts from all descendant subfolders and list descendant papers when selected.
