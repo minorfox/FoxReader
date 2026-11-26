@@ -628,7 +628,7 @@ export function SettingsModal({
   autoCheckNonce?: number;
   onClose: () => void;
   onSelectDataDir: () => Promise<void>;
-  onOpenDataDir: () => Promise<void>;
+  onOpenDataDir: (subDir?: 'pdfs' | 'docs' | 'snapshots') => Promise<void>;
   onCheckForUpdates: () => Promise<UpdateCheckResult>;
   onDownloadUpdate: (input: DownloadUpdateInput) => Promise<UpdateDownloadState>;
   onCancelUpdateDownload: () => Promise<void>;
@@ -751,14 +751,22 @@ export function SettingsModal({
                 className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 text-xs font-medium text-slate-700 hover:bg-slate-50 transition"
               >
                 <FolderOpen className="w-3.5 h-3.5" />
-                在文件管理器中打开
+                打开数据目录
+              </button>
+              <button
+                type="button"
+                onClick={() => void onOpenDataDir('pdfs')}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 text-xs font-medium text-slate-700 hover:bg-slate-50 transition"
+              >
+                <FolderOpen className="w-3.5 h-3.5" />
+                打开 pdfs/
               </button>
               <button
                 type="button"
                 onClick={() => void onSelectDataDir()}
                 className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-violet-600 text-xs font-medium text-white hover:bg-violet-700 transition"
               >
-                切换 / 指向已有 FoxReaderData 目录
+                切换目录
               </button>
             </div>
           </div>
@@ -931,23 +939,33 @@ export function SettingsModal({
               <span className="font-medium text-slate-700 shrink-0">联系与反馈</span>
               <span className="font-mono text-slate-600 truncate select-text">lihuang@swufe.edu.cn</span>
             </div>
-            <button
-              type="button"
-              onClick={() => void handleCopyEmail()}
-              className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-slate-200 text-xs font-medium text-slate-700 hover:border-violet-300 hover:text-violet-700 shrink-0 transition"
-            >
-              {copiedEmail ? (
-                <>
-                  <Check className="w-3.5 h-3.5 text-emerald-600" />
-                  <span className="text-emerald-700">已复制</span>
-                </>
-              ) : (
-                <>
-                  <Copy className="w-3.5 h-3.5" />
-                  <span>复制邮箱</span>
-                </>
-              )}
-            </button>
+            <div className="flex items-center gap-1.5 shrink-0">
+              <button
+                type="button"
+                onClick={() => void handleCopyEmail()}
+                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-slate-200 text-xs font-medium text-slate-700 hover:border-violet-300 hover:text-violet-700 transition"
+              >
+                {copiedEmail ? (
+                  <>
+                    <Check className="w-3.5 h-3.5 text-emerald-600" />
+                    <span className="text-emerald-700">已复制</span>
+                  </>
+                ) : (
+                  <>
+                    <Copy className="w-3.5 h-3.5" />
+                    <span>复制邮箱</span>
+                  </>
+                )}
+              </button>
+              <button
+                type="button"
+                onClick={() => void onOpenExternalUrl('https://github.com/minorfox/FoxReader')}
+                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-slate-200 text-xs font-medium text-slate-700 hover:border-violet-300 hover:text-violet-700 transition"
+              >
+                <ExternalLink className="w-3.5 h-3.5" />
+                <span>GitHub</span>
+              </button>
+            </div>
           </div>
         </div>
         <div className="flex justify-end px-5 py-3 bg-slate-50 border-t border-slate-100">

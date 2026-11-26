@@ -776,6 +776,7 @@ export function App() {
             setConfirmBatchDelete({ papers: items, onDone })
           }
           onChangePaperStatus={handleChangePaperStatus}
+          onOpenSettings={() => setSettingsOpen(true)}
         />
       )}
 
@@ -940,7 +941,7 @@ export function App() {
         autoCheckNonce={settingsAutoCheckNonce}
         onClose={() => setSettingsOpen(false)}
         onSelectDataDir={handleSelectDataDir}
-        onOpenDataDir={() => window.foxreader.openDataDir()}
+        onOpenDataDir={(subDir) => window.foxreader.openDataDir(subDir)}
         onCheckForUpdates={() => window.foxreader.checkForUpdates()}
         onDownloadUpdate={(input) => window.foxreader.downloadUpdate(input)}
         onCancelUpdateDownload={() => window.foxreader.cancelUpdateDownload()}

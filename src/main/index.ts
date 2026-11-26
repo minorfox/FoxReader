@@ -77,6 +77,41 @@ function createMainWindow(): BrowserWindow {
     },
   });
 
+  if (process.platform !== 'darwin') {
+    win.removeMenu();
+    win.webContents.on('before-input-event', (event, input) => {
+      if (input.type !== 'keyDown') return;
+      if (input.key === 'F11') {
+        event.preventDefault();
+        win.setFullScreen(!win.isFullScreen());
+        return;
+      }
+      if (input.control && !input.alt && !input.shift && input.key === ',') {
+        event.preventDefault();
+        sendMenuAction('open-settings');
+        return;
+      }
+      if (input.control && !input.alt && !input.shift && input.key.toLowerCase() === 'o') {
+        event.preventDefault();
+        sendMenuAction('import-files');
+        return;
+      }
+      if (
+        input.key === 'F12' ||
+        (input.control && input.shift && !input.alt && input.key.toLowerCase() === 'i')
+      ) {
+        event.preventDefault();
+        win.webContents.toggleDevTools();
+        return;
+      }
+      if (!app.isPackaged && input.control && !input.alt && input.key.toLowerCase() === 'r') {
+        event.preventDefault();
+        if (input.shift) win.webContents.reloadIgnoringCache();
+        else win.webContents.reload();
+      }
+    });
+  }
+
   const devUrl = process.env.VITE_DEV_SERVER_URL;
   if (devUrl) {
     void win.loadURL(devUrl);
@@ -591,32 +626,33 @@ function sendMenuAction(action: AppMenuAction): void {
 }
 
 function setupApplicationMenu(): void {
-  const isMac = process.platform === 'darwin';
+  if (process.platform !== 'darwin') {
+    // Keep Windows/Linux windows clean without a top menu bar and prevent Alt+drag focus hijack
+    Menu.setApplicationMenu(null);
+    return;
+  }
+
   const template: MenuItemConstructorOptions[] = [
-    ...(isMac
-      ? [
-          {
-            label: app.name,
-            submenu: [
-              { role: 'about', label: '关于 FoxReader' },
-              { type: 'separator' },
-              {
-                label: '应用设置...',
-                accelerator: 'CmdOrCtrl+,',
-                click: () => sendMenuAction('open-settings'),
-              },
-              { type: 'separator' },
-              { role: 'services', label: '服务' },
-              { type: 'separator' },
-              { role: 'hide', label: '隐藏 FoxReader' },
-              { role: 'hideOthers', label: '隐藏其他' },
-              { role: 'unhide', label: '全部显示' },
-              { type: 'separator' },
-              { role: 'quit', label: '退出 FoxReader' },
-            ] as MenuItemConstructorOptions[],
-          },
-        ]
-      : []),
+    {
+      label: app.name,
+      submenu: [
+        { role: 'about', label: '关于 FoxReader' },
+        { type: 'separator' },
+        {
+          label: '应用设置...',
+          accelerator: 'CmdOrCtrl+,',
+          click: () => sendMenuAction('open-settings'),
+        },
+        { type: 'separator' },
+        { role: 'services', label: '服务' },
+        { type: 'separator' },
+        { role: 'hide', label: '隐藏 FoxReader' },
+        { role: 'hideOthers', label: '隐藏其他' },
+        { role: 'unhide', label: '全部显示' },
+        { type: 'separator' },
+        { role: 'quit', label: '退出 FoxReader' },
+      ],
+    },
     {
       label: '文件',
       submenu: [
@@ -626,7 +662,7 @@ function setupApplicationMenu(): void {
           click: () => sendMenuAction('import-files'),
         },
         { type: 'separator' },
-        { role: isMac ? 'close' : 'quit', label: isMac ? '关闭窗口' : '退出' },
+        { role: 'close', label: '关闭窗口' },
       ],
     },
     {
