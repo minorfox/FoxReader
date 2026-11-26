@@ -22,7 +22,7 @@ async function main() {
     const {
       selectReleaseAsset,
       parseSha256Sums,
-      buildWindowsSilentInstallCommand,
+      buildWindowsNsisSilentArgs,
       isAllowedReleaseAssetUrl,
     } = await import(pathToFileURL(bundlePath).toString());
 
@@ -67,17 +67,10 @@ async function main() {
     assert.equal(parsedSums.get('FoxReader.0.3.0.exe'), shaC);
     assert.equal(parsedSums.get('FoxReader-0.3.0-arm64.dmg'), shaB.toLowerCase());
 
-    // Build silent PowerShell EncodedCommand safely with spaces & CJK path
-    const encoded = buildWindowsSilentInstallCommand(
-      12345,
-      "C:\\Users\\狸狸\\AppData\\Local\\Temp\\foxreader-updates\\FoxReader.Setup.0.2.2.exe",
-      "C:\\Program Files\\FoxReader's\\FoxReader.exe",
-    );
-    const decoded = Buffer.from(encoded, 'base64').toString('utf16le');
-    assert.ok(decoded.includes('Wait-Process -Id 12345'));
-    assert.ok(decoded.includes("'/S'"));
-    assert.ok(decoded.includes('狸狸'));
-    assert.ok(decoded.includes("FoxReader''s"));
+    // Build NSIS silent update arguments without whitespace so quoting is safe
+    const nsisArgs = buildWindowsNsisSilentArgs();
+    assert.deepEqual(nsisArgs, ['--updated', '/S', '--force-run']);
+    assert.ok(nsisArgs.every((arg) => !/\s/.test(arg)));
 
     console.log('ALL_UPDATER_TESTS_PASSED');
   } finally {

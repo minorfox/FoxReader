@@ -792,6 +792,11 @@ app.whenReady().then(() => {
   setupApplicationMenu();
   mainWindow = createMainWindow();
 
+  const launchedAfterUpdate = process.argv.includes('--updated');
+  setTimeout(() => {
+    void appUpdater.cleanupStaleUpdateFiles(launchedAfterUpdate);
+  }, 4000);
+
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
       mainWindow = createMainWindow();

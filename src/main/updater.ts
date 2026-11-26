@@ -10,12 +10,17 @@ import type {
   UpdateInstallMode,
 } from '../shared/types.js';
 import {
-  buildWindowsSilentInstallCommand,
+  buildWindowsNsisSilentArgs,
   isAllowedReleaseAssetUrl,
   parseSha256Sums,
 } from './updaterCore.js';
 
 const CHECKSUM_TIMEOUT_MS = 15_000;
+const STALE_UPDATE_FILE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+
+function getUpdatesTempDir(): string {
+  return path.join(os.tmpdir(), 'foxreader-updates');
+}
 
 export function detectInstallMode(): UpdateInstallMode {
   if (!app.isPackaged) {
@@ -99,7 +104,7 @@ export class AppUpdaterManager {
     const controller = new AbortController();
     this.activeAbort = controller;
 
-    const updatesDir = path.join(os.tmpdir(), 'foxreader-updates');
+    const updatesDir = getUpdatesTempDir();
     await fs.promises.mkdir(updatesDir, { recursive: true });
     const destPath = path.join(updatesDir, safeName);
 
@@ -258,6 +263,37 @@ export class AppUpdaterManager {
     }
   }
 
+  public async cleanupStaleUpdateFiles(forceAll = false): Promise<void> {
+    if (this.activeAbort !== null) {
+      return;
+    }
+
+    const updatesDir = getUpdatesTempDir();
+    let entries: string[];
+    try {
+      entries = await fs.promises.readdir(updatesDir);
+    } catch {
+      return;
+    }
+
+    const now = Date.now();
+    for (const entry of entries) {
+      const fullPath = path.join(updatesDir, entry);
+      if (!forceAll && this.verifiedFilePath && path.resolve(fullPath) === path.resolve(this.verifiedFilePath)) {
+        continue;
+      }
+      try {
+        const stat = await fs.promises.stat(fullPath);
+        if (!stat.isFile()) continue;
+        if (forceAll || now - stat.mtimeMs > STALE_UPDATE_FILE_MAX_AGE_MS) {
+          await fs.promises.rm(fullPath, { force: true }).catch(() => undefined);
+        }
+      } catch {
+        // Ignore entries removed concurrently or temporarily locked
+      }
+    }
+  }
+
   public async applyUpdate(
     filePath: string,
     onBeforeQuit: () => void,
@@ -269,23 +305,32 @@ export class AppUpdaterManager {
     const mode = detectInstallMode();
 
     if (mode === 'win-nsis') {
-      const encodedCommand = buildWindowsSilentInstallCommand(
-        process.pid,
-        filePath,
-        process.execPath,
-      );
-      onBeforeQuit();
-      const child = spawn(
-        'powershell.exe',
-        ['-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-EncodedCommand', encodedCommand],
-        {
+      const args = buildWindowsNsisSilentArgs();
+      const spawnResult = await new Promise<{ ok: boolean; error?: string }>((resolve) => {
+        const child = spawn(filePath, args, {
           detached: true,
           stdio: 'ignore',
-          windowsHide: true,
-        },
-      );
-      child.unref();
-      setImmediate(() => app.quit());
+        });
+        let settled = false;
+        child.once('error', (err) => {
+          if (settled) return;
+          settled = true;
+          resolve({ ok: false, error: `启动更新安装程序失败：${err.message}` });
+        });
+        child.once('spawn', () => {
+          if (settled) return;
+          settled = true;
+          child.unref();
+          resolve({ ok: true });
+        });
+      });
+
+      if (!spawnResult.ok) {
+        return spawnResult;
+      }
+
+      onBeforeQuit();
+      setTimeout(() => app.quit(), 150);
       return { ok: true };
     }
 

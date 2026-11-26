@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Windows NSIS in-app silent update now launches the verified installer directly with `--updated /S --force-run` instead of spawning a detached `powershell.exe` helper (which exited early under Windows `DETACHED_PROCESS`), and cleans up temporary update installers on startup.
+
+### Improved
+
+- Restored a 2-row left sidebar top header separating `导入文档` / `设置` from the full-width global search bar.
+
 ## [0.3.0] - 2026-11-26
 
 ### Added

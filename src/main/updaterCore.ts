@@ -80,32 +80,12 @@ export function parseSha256Sums(content: string): Map<string, string> {
   return map;
 }
 
-function escapePowerShellSingleQuoted(value: string): string {
-  return value.replace(/'/g, "''");
-}
-
 /**
- * Builds a UTF-16LE Base64 encoded PowerShell `-EncodedCommand` script that waits for the
- * running FoxReader PID to exit, executes the NSIS installer silently (`/S`), relaunches
- * the installed binary, and removes the temporary installer file.
+ * Returns electron-builder NSIS silent-update arguments:
+ * - `--updated`: waits/stops running app instances in `$INSTDIR`, preserves shortcuts, and keeps user data
+ * - `/S`: silent install (automatically reuses HKCU/HKLM `InstallLocation` including custom directories)
+ * - `--force-run`: relaunches the app as the normal user after assisted (`oneClick: false`) silent install
  */
-export function buildWindowsSilentInstallCommand(
-  pid: number,
-  installerPath: string,
-  exePath: string,
-): string {
-  const safePid = Math.max(1, Math.floor(pid));
-  const psInstaller = escapePowerShellSingleQuoted(installerPath);
-  const psExe = escapePowerShellSingleQuoted(exePath);
-
-  const script = [
-    `$ErrorActionPreference = 'SilentlyContinue'`,
-    `Wait-Process -Id ${safePid} -Timeout 30`,
-    `Start-Sleep -Milliseconds 350`,
-    `$p = Start-Process -FilePath '${psInstaller}' -ArgumentList '/S' -Wait -PassThru`,
-    `Remove-Item -LiteralPath '${psInstaller}' -Force -ErrorAction SilentlyContinue`,
-    `if (Test-Path -LiteralPath '${psExe}') { Start-Process -FilePath '${psExe}' }`,
-  ].join('\n');
-
-  return Buffer.from(script, 'utf16le').toString('base64');
+export function buildWindowsNsisSilentArgs(): string[] {
+  return ['--updated', '/S', '--force-run'];
 }

@@ -450,37 +450,17 @@ export function LeftSidebar({
 
   return (
     <aside className="w-80 shrink-0 border-r border-slate-200 bg-white flex flex-col h-full select-none">
-      {/* Unified Top Bar: Import (Left) + Global Search (Center) + Settings (Right) */}
-      <div className="h-12 px-2.5 border-b border-slate-200 flex items-center gap-1.5 shrink-0">
+      {/* Row 1: Primary Import (Left) + Settings (Right) */}
+      <div className="h-12 px-3 border-b border-slate-200 flex items-center justify-between gap-2 shrink-0">
         <button
           type="button"
           onClick={() => onPickAndImport(activeView === 'folder' ? activeFolderId : null)}
           title="导入 PDF / Markdown 文档 (Ctrl+O)"
-          className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-violet-600 hover:bg-violet-700 text-white text-xs font-medium transition shadow-2xs shrink-0"
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-violet-600 hover:bg-violet-700 text-white text-xs font-medium transition shadow-2xs shrink-0"
         >
           <FileUp className="w-3.5 h-3.5" />
-          <span>导入</span>
+          <span>导入文档</span>
         </button>
-
-        <div className="relative flex-1 min-w-0">
-          <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
-          <input
-            type="text"
-            value={searchQuery}
-            onChange={(e) => onChangeSearch(e.target.value)}
-            placeholder="搜索论文、批注、笔记..."
-            className="w-full rounded-lg border border-slate-200 bg-slate-50/70 pl-7 pr-6 py-1.5 text-xs text-slate-800 placeholder:text-slate-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-violet-500/25 focus:border-violet-500 transition"
-          />
-          {searchQuery && (
-            <button
-              type="button"
-              onClick={() => onChangeSearch('')}
-              className="absolute right-1.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
-            >
-              <X className="w-3.5 h-3.5" />
-            </button>
-          )}
-        </div>
 
         <button
           type="button"
@@ -490,6 +470,29 @@ export function LeftSidebar({
         >
           <Settings className="w-4 h-4" />
         </button>
+      </div>
+
+      {/* Row 2: Full-width Global Search */}
+      <div className="px-2.5 py-2 border-b border-slate-100 shrink-0">
+        <div className="relative">
+          <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={(e) => onChangeSearch(e.target.value)}
+            placeholder="搜索标题、作者、批注或笔记..."
+            className="w-full rounded-lg border border-slate-200 bg-slate-50/70 pl-8 pr-7 py-1.5 text-xs text-slate-800 placeholder:text-slate-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-violet-500/25 focus:border-violet-500 transition"
+          />
+          {searchQuery && (
+            <button
+              type="button"
+              onClick={() => onChangeSearch('')}
+              className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Views + Folder Tree */}
