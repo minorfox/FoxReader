@@ -7,9 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-11-26
+
 ### Improved
 
 - Removed the redundant `文件夹` section label in the left sidebar and moved the create-root-folder button and top-level folder drop zone onto the `全部论文` row.
+- Aligned the `未分类` row at the same hierarchy level and indentation as top-level folders under `全部论文`, with pixel-aligned right-side paper counts across all directory rows.
 
 ## [0.3.0] - 2026-11-26
 
