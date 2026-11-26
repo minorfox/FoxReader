@@ -207,13 +207,36 @@ export interface EnrichPaperOnlineResult {
   error?: string;
 }
 
+export type UpdateInstallMode = 'win-nsis' | 'win-portable' | 'mac-arm64' | 'mac-x64' | 'dev';
+
 export interface UpdateCheckResult {
   currentVersion: string;
   latestVersion: string;
   hasUpdate: boolean;
   releaseUrl: string;
   releaseNotes?: string;
+  installMode?: UpdateInstallMode;
+  assetName?: string;
+  assetUrl?: string;
+  assetSize?: number;
+  checksumUrl?: string;
   error?: string;
+}
+
+export interface UpdateDownloadState {
+  phase: 'idle' | 'downloading' | 'verifying' | 'ready' | 'installing' | 'error' | 'cancelled';
+  assetName?: string;
+  downloadedBytes: number;
+  totalBytes: number;
+  percent: number;
+  filePath?: string;
+  error?: string;
+}
+
+export interface DownloadUpdateInput {
+  assetName: string;
+  assetUrl: string;
+  checksumUrl?: string;
 }
 
 export interface TranslateTextResult {
@@ -243,6 +266,10 @@ export interface FoxReaderApi {
   selectDataDir: () => Promise<AppSettings | null>;
   openDataDir: () => Promise<void>;
   checkForUpdates: () => Promise<UpdateCheckResult>;
+  downloadUpdate: (input: DownloadUpdateInput) => Promise<UpdateDownloadState>;
+  cancelUpdateDownload: () => Promise<void>;
+  applyDownloadedUpdate: (filePath: string) => Promise<{ ok: boolean; error?: string }>;
+  onUpdateDownloadState: (listener: (state: UpdateDownloadState) => void) => () => void;
   openExternalUrl: (url: string) => Promise<void>;
   getLibraryOverview: () => Promise<LibraryOverview>;
   createFolder: (name: string, parentId: string | null) => Promise<Folder>;

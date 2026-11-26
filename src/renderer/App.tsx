@@ -826,6 +826,10 @@ export function App() {
         onSelectDataDir={handleSelectDataDir}
         onOpenDataDir={() => window.foxreader.openDataDir()}
         onCheckForUpdates={() => window.foxreader.checkForUpdates()}
+        onDownloadUpdate={(input) => window.foxreader.downloadUpdate(input)}
+        onCancelUpdateDownload={() => window.foxreader.cancelUpdateDownload()}
+        onApplyDownloadedUpdate={(filePath) => window.foxreader.applyDownloadedUpdate(filePath)}
+        onSubscribeUpdateState={(listener) => window.foxreader.onUpdateDownloadState(listener)}
         onOpenExternalUrl={(url) => window.foxreader.openExternalUrl(url)}
       />
 

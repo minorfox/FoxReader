@@ -6,6 +6,8 @@ import {
   type TranslateTextResult,
   type UpdateCheckResult,
 } from '../shared/types.js';
+import { detectInstallMode } from './updater.js';
+import { selectReleaseAsset, type ReleaseAsset } from './updaterCore.js';
 
 const RELEASES_FALLBACK_URL = 'https://github.com/minorfox/FoxReader/releases';
 const GITHUB_LATEST_API = 'https://api.github.com/repos/minorfox/FoxReader/releases/latest';
@@ -35,6 +37,7 @@ interface GithubReleaseResponse {
   tag_name?: string;
   html_url?: string;
   body?: string;
+  assets?: ReleaseAsset[];
 }
 
 function tokenizeTitle(raw: string): string[] {
@@ -258,12 +261,21 @@ export async function checkLatestGithubRelease(currentVersion: string): Promise<
         ? data.html_url
         : RELEASES_FALLBACK_URL;
 
+    const installMode = detectInstallMode();
+    const assets = Array.isArray(data.assets) ? data.assets : [];
+    const { asset, checksumAsset } = selectReleaseAsset(assets, installMode);
+
     return {
       currentVersion,
       latestVersion,
       hasUpdate: isNewerVersion(latestVersion, currentVersion),
       releaseUrl,
       releaseNotes: data.body?.trim() || undefined,
+      installMode,
+      assetName: asset?.name,
+      assetUrl: asset?.browser_download_url,
+      assetSize: asset?.size,
+      checksumUrl: checksumAsset?.browser_download_url,
     };
   } catch (error) {
     return {

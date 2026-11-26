@@ -1,10 +1,12 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import type {
   CreateAnnotationInput,
+  DownloadUpdateInput,
   EnrichPaperOnlineInput,
   FoxReaderApi,
   PaperListQuery,
   UpdateAnnotationInput,
+  UpdateDownloadState,
   UpdatePaperMetadataInput,
 } from '../shared/types.js';
 
@@ -13,6 +15,19 @@ const api: FoxReaderApi = {
   selectDataDir: () => ipcRenderer.invoke('app:selectDataDir'),
   openDataDir: () => ipcRenderer.invoke('app:openDataDir'),
   checkForUpdates: () => ipcRenderer.invoke('app:checkUpdate'),
+  downloadUpdate: (input: DownloadUpdateInput) => ipcRenderer.invoke('app:downloadUpdate', input),
+  cancelUpdateDownload: () => ipcRenderer.invoke('app:cancelUpdateDownload'),
+  applyDownloadedUpdate: (filePath: string) =>
+    ipcRenderer.invoke('app:applyDownloadedUpdate', filePath),
+  onUpdateDownloadState: (listener: (state: UpdateDownloadState) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, state: UpdateDownloadState) => {
+      listener(state);
+    };
+    ipcRenderer.on('app:updateDownloadState', handler);
+    return () => {
+      ipcRenderer.removeListener('app:updateDownloadState', handler);
+    };
+  },
   openExternalUrl: (url: string) => ipcRenderer.invoke('app:openExternal', url),
   getLibraryOverview: () => ipcRenderer.invoke('library:getOverview'),
   createFolder: (name: string, parentId: string | null) =>

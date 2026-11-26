@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- In-app update download with progress tracking and SHA-256 verification against `SHA256SUMS.txt`: Windows NSIS installer supports 1-click silent update (`/S`) and automatic relaunch after closing SQLite/lock; Windows portable `.exe` prompts close-before-replace and locates the verified update before quitting; macOS selects and opens the architecture-matched `.dmg`.
+
 ## [0.2.2] - 2026-11-25
 
 ### Added

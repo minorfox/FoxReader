@@ -13,14 +13,18 @@ import {
   Mail,
   Copy,
   Check,
+  Download,
 } from 'lucide-react';
 import type {
   DataDirLockInfo,
+  DownloadUpdateInput,
   Folder,
   Paper,
   PaperStatus,
   Tag,
   UpdateCheckResult,
+  UpdateDownloadState,
+  UpdateInstallMode,
   UpdatePaperMetadataInput,
 } from '../../shared/types';
 
@@ -391,6 +395,43 @@ export function MetadataModal({
   );
 }
 
+function formatMb(bytes: number): string {
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function getUpdateModeCopy(mode: UpdateInstallMode | undefined): {
+  hint: string;
+  downloadLabel: string;
+  applyLabel: string;
+} {
+  if (mode === 'win-nsis') {
+    return {
+      hint: 'Windows 安装版支持应用内下载、SHA-256 校验并静默覆盖更新后自动重启。',
+      downloadLabel: '下载并静默更新',
+      applyLabel: '立即退出并静默安装',
+    };
+  }
+  if (mode === 'win-portable') {
+    return {
+      hint: '当前为免安装便携版：需先关闭本程序后再用新版 .exe 替换旧文件（下载后可一键定位文件并退出）。',
+      downloadLabel: '下载新版便携包',
+      applyLabel: '定位新版并关闭当前程序',
+    };
+  }
+  if (mode === 'mac-arm64' || mode === 'mac-x64') {
+    return {
+      hint: 'macOS 将按当前芯片架构下载 DMG 并校验 SHA-256，打开后拖入「应用程序」替换即可。',
+      downloadLabel: '下载 DMG 安装包',
+      applyLabel: '打开 DMG 安装镜像',
+    };
+  }
+  return {
+    hint: '当前为开发运行模式：可演练下载与 SHA-256 校验，不会覆盖本地开发环境。',
+    downloadLabel: '下载更新包（演练）',
+    applyLabel: '在文件夹中查看下载包',
+  };
+}
+
 export function SettingsModal({
   open,
   dataDir,
@@ -399,6 +440,10 @@ export function SettingsModal({
   onSelectDataDir,
   onOpenDataDir,
   onCheckForUpdates,
+  onDownloadUpdate,
+  onCancelUpdateDownload,
+  onApplyDownloadedUpdate,
+  onSubscribeUpdateState,
   onOpenExternalUrl,
 }: {
   open: boolean;
@@ -408,19 +453,32 @@ export function SettingsModal({
   onSelectDataDir: () => Promise<void>;
   onOpenDataDir: () => Promise<void>;
   onCheckForUpdates: () => Promise<UpdateCheckResult>;
+  onDownloadUpdate: (input: DownloadUpdateInput) => Promise<UpdateDownloadState>;
+  onCancelUpdateDownload: () => Promise<void>;
+  onApplyDownloadedUpdate: (filePath: string) => Promise<{ ok: boolean; error?: string }>;
+  onSubscribeUpdateState: (listener: (state: UpdateDownloadState) => void) => () => void;
   onOpenExternalUrl: (url: string) => Promise<void>;
 }) {
   const [checkingUpdate, setCheckingUpdate] = useState(false);
   const [updateResult, setUpdateResult] = useState<UpdateCheckResult | null>(null);
+  const [downloadState, setDownloadState] = useState<UpdateDownloadState | null>(null);
+  const [applyingUpdate, setApplyingUpdate] = useState(false);
   const [copiedEmail, setCopiedEmail] = useState(false);
 
   useEffect(() => {
     if (!open) {
       setUpdateResult(null);
       setCheckingUpdate(false);
+      setDownloadState(null);
+      setApplyingUpdate(false);
       setCopiedEmail(false);
+      return;
     }
-  }, [open]);
+    const unsub = onSubscribeUpdateState((next) => {
+      setDownloadState(next);
+    });
+    return unsub;
+  }, [open, onSubscribeUpdateState]);
 
   if (!open) return null;
 
@@ -432,6 +490,7 @@ export function SettingsModal({
 
   const handleCheckUpdate = async () => {
     setCheckingUpdate(true);
+    setDownloadState(null);
     try {
       const res = await onCheckForUpdates();
       setUpdateResult(res);
@@ -439,6 +498,40 @@ export function SettingsModal({
       setCheckingUpdate(false);
     }
   };
+
+  const handleStartDownload = async () => {
+    if (!updateResult?.assetName || !updateResult.assetUrl) return;
+    const finalState = await onDownloadUpdate({
+      assetName: updateResult.assetName,
+      assetUrl: updateResult.assetUrl,
+      checksumUrl: updateResult.checksumUrl,
+    });
+    setDownloadState(finalState);
+  };
+
+  const handleApplyUpdate = async () => {
+    if (!downloadState?.filePath) return;
+    setApplyingUpdate(true);
+    try {
+      const res = await onApplyDownloadedUpdate(downloadState.filePath);
+      if (!res.ok) {
+        setDownloadState((prev) => ({
+          phase: 'error',
+          assetName: prev?.assetName,
+          downloadedBytes: prev?.downloadedBytes ?? 0,
+          totalBytes: prev?.totalBytes ?? 0,
+          percent: 0,
+          error: res.error || '启动安装失败，请前往发布页手动下载。',
+        }));
+      }
+    } finally {
+      setApplyingUpdate(false);
+    }
+  };
+
+  const modeCopy = getUpdateModeCopy(updateResult?.installMode);
+  const isBusyDownloading =
+    downloadState?.phase === 'downloading' || downloadState?.phase === 'verifying';
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-[1px] p-4">
@@ -531,18 +624,114 @@ export function SettingsModal({
                     </button>
                   </div>
                 ) : updateResult.hasUpdate ? (
-                  <div className="flex items-center justify-between gap-2">
-                    <span>
-                      发现新版本 <strong>v{updateResult.latestVersion}</strong>（当前 v{updateResult.currentVersion}）
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => void onOpenExternalUrl(updateResult.releaseUrl)}
-                      className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-violet-600 text-white font-medium hover:bg-violet-700 shrink-0 transition"
-                    >
-                      前往下载
-                      <ExternalLink className="w-3 h-3" />
-                    </button>
+                  <div className="space-y-2.5">
+                    <div className="flex items-center justify-between gap-2">
+                      <div>
+                        发现新版本 <strong>v{updateResult.latestVersion}</strong>（当前 v{updateResult.currentVersion}）
+                        {updateResult.assetSize ? (
+                          <span className="ml-1.5 text-[11px] text-violet-700/80">
+                            · {formatMb(updateResult.assetSize)}
+                          </span>
+                        ) : null}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => void onOpenExternalUrl(updateResult.releaseUrl)}
+                        className="inline-flex items-center gap-1 text-[11px] text-violet-700 hover:underline shrink-0"
+                      >
+                        去 GitHub 下载
+                        <ExternalLink className="w-3 h-3" />
+                      </button>
+                    </div>
+
+                    <div className="text-[11px] text-violet-800/85 leading-relaxed">
+                      {modeCopy.hint}
+                    </div>
+
+                    {isBusyDownloading && downloadState ? (
+                      <div className="space-y-1.5 rounded-md bg-white/80 border border-violet-200 p-2.5">
+                        <div className="flex items-center justify-between text-[11px] text-slate-700">
+                          <span>
+                            {downloadState.phase === 'verifying'
+                              ? '正在校验 SHA-256 完整性...'
+                              : `正在下载 ${downloadState.assetName ?? ''}...`}
+                          </span>
+                          <span className="tabular-nums font-medium">
+                            {downloadState.totalBytes > 0
+                              ? `${formatMb(downloadState.downloadedBytes)} / ${formatMb(downloadState.totalBytes)} (${downloadState.percent}%)`
+                              : formatMb(downloadState.downloadedBytes)}
+                          </span>
+                        </div>
+                        <div className="h-1.5 w-full rounded-full bg-violet-100 overflow-hidden">
+                          <div
+                            style={{
+                              width: `${
+                                downloadState.phase === 'verifying'
+                                  ? 100
+                                  : Math.max(4, downloadState.percent)
+                              }%`,
+                            }}
+                            className="h-full bg-violet-600 transition-all duration-150"
+                          />
+                        </div>
+                        {downloadState.phase === 'downloading' && (
+                          <div className="flex justify-end">
+                            <button
+                              type="button"
+                              onClick={() => void onCancelUpdateDownload()}
+                              className="px-2 py-0.5 rounded border border-slate-200 text-[11px] text-slate-600 hover:bg-slate-100 transition"
+                            >
+                              取消下载
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    ) : downloadState?.phase === 'ready' && downloadState.filePath ? (
+                      <div className="rounded-md bg-emerald-50 border border-emerald-200 p-2.5 flex items-center justify-between gap-2 text-emerald-900">
+                        <div className="flex items-center gap-1.5 text-[11px]">
+                          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                          <span>安装包已下载并校验通过</span>
+                        </div>
+                        <button
+                          type="button"
+                          disabled={applyingUpdate}
+                          onClick={() => void handleApplyUpdate()}
+                          className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-emerald-600 text-white text-xs font-medium hover:bg-emerald-700 disabled:opacity-60 shrink-0 transition"
+                        >
+                          {applyingUpdate ? '正在启动...' : modeCopy.applyLabel}
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="space-y-2">
+                        {downloadState?.phase === 'error' && downloadState.error && (
+                          <div className="rounded-md bg-amber-50 border border-amber-200 px-2.5 py-1.5 text-[11px] text-amber-800">
+                            {downloadState.error}
+                          </div>
+                        )}
+                        {downloadState?.phase === 'cancelled' && (
+                          <div className="text-[11px] text-slate-500">已取消下载。</div>
+                        )}
+                        {updateResult.assetUrl && updateResult.assetName ? (
+                          <button
+                            type="button"
+                            onClick={() => void handleStartDownload()}
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-violet-600 text-white text-xs font-medium hover:bg-violet-700 transition"
+                          >
+                            <Download className="w-3.5 h-3.5" />
+                            {downloadState?.phase === 'error' ? `重试${modeCopy.downloadLabel}` : modeCopy.downloadLabel}
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => void onOpenExternalUrl(updateResult.releaseUrl)}
+                            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-violet-600 text-white font-medium hover:bg-violet-700 transition"
+                          >
+                            前往下载
+                            <ExternalLink className="w-3 h-3" />
+                          </button>
+                        )}
+                      </div>
+                    )}
                   </div>
                 ) : (
                   <div>当前已是最新版本 v{updateResult.currentVersion}。</div>

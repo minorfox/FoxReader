@@ -8,9 +8,11 @@ import { DataDirLock } from './dataLock.js';
 import { FoxReaderDatabase } from './database.js';
 import { checkLatestGithubRelease, fetchOpenAlexMetadata, translateSelectionText } from './onlineMetadata.js';
 import { SettingsManager } from './settings.js';
+import { AppUpdaterManager } from './updater.js';
 import type {
   CreateAnnotationInput,
   DataDirLockInfo,
+  DownloadUpdateInput,
   EnrichPaperOnlineInput,
   PaperListQuery,
   UpdateAnnotationInput,
@@ -36,6 +38,7 @@ let mainWindow: BrowserWindow | null = null;
 let settingsManager: SettingsManager;
 let database: FoxReaderDatabase;
 const dataDirLock = new DataDirLock();
+const appUpdater = new AppUpdaterManager();
 let currentLockWarning: DataDirLockInfo | null = null;
 
 function getAppIconPath(): string | undefined {
@@ -364,6 +367,25 @@ function registerIpcHandlers(): void {
   });
 
   ipcMain.handle('app:checkUpdate', () => checkLatestGithubRelease(app.getVersion()));
+
+  ipcMain.handle('app:downloadUpdate', (_event, input: DownloadUpdateInput) =>
+    appUpdater.downloadUpdate(input, (state) => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('app:updateDownloadState', state);
+      }
+    }),
+  );
+
+  ipcMain.handle('app:cancelUpdateDownload', () => {
+    appUpdater.cancelDownload();
+  });
+
+  ipcMain.handle('app:applyDownloadedUpdate', (_event, filePath: string) =>
+    appUpdater.applyUpdate(filePath, () => {
+      dataDirLock.release();
+      database?.close();
+    }),
+  );
 
   ipcMain.handle('app:openExternal', async (_event, url: string) => {
     if (typeof url !== 'string' || !url.startsWith('https://github.com/minorfox/FoxReader')) {

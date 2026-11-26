@@ -14,6 +14,7 @@
     "test:db": "node scripts/run-db-test.mjs",
     "test:selection": "node scripts/test-selection.mjs",
     "test:metadata": "node scripts/test-metadata.mjs",
+    "test:updater": "node scripts/test-updater.mjs",
     "dist:dir": "node scripts/build-electron.mjs && vite build && electron-builder --win --dir --publish never",
     "dist:win": "node scripts/build-electron.mjs && vite build && electron-builder --win --publish never",
     "dist:mac": "node scripts/build-electron.mjs && vite build && electron-builder --mac --publish never"
