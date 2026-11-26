@@ -450,53 +450,46 @@ export function LeftSidebar({
 
   return (
     <aside className="w-80 shrink-0 border-r border-slate-200 bg-white flex flex-col h-full select-none">
-      {/* Header */}
-      <div className="h-12 px-3 border-b border-slate-200 flex items-center justify-between shrink-0">
-        <div className="flex items-center gap-2">
-          <Library className="w-4 h-4 text-violet-600 shrink-0" />
-          <span className="font-semibold text-sm tracking-tight text-slate-900">论文库</span>
-        </div>
-        <div className="flex items-center gap-1.5">
-          <button
-            type="button"
-            onClick={() => onPickAndImport(activeView === 'folder' ? activeFolderId : null)}
-            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-violet-600 hover:bg-violet-700 text-white text-xs font-medium transition shadow-2xs"
-          >
-            <FileUp className="w-3.5 h-3.5" />
-            导入 PDF
-          </button>
-          <button
-            type="button"
-            onClick={onOpenSettings}
-            title="应用设置 (Ctrl+,)"
-            className="p-1.5 rounded-md text-slate-500 hover:text-slate-800 hover:bg-slate-100 transition"
-          >
-            <Settings className="w-4 h-4" />
-          </button>
-        </div>
-      </div>
+      {/* Unified Top Bar: Import (Left) + Global Search (Center) + Settings (Right) */}
+      <div className="h-12 px-2.5 border-b border-slate-200 flex items-center gap-1.5 shrink-0">
+        <button
+          type="button"
+          onClick={() => onPickAndImport(activeView === 'folder' ? activeFolderId : null)}
+          title="导入 PDF / Markdown 文档 (Ctrl+O)"
+          className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-violet-600 hover:bg-violet-700 text-white text-xs font-medium transition shadow-2xs shrink-0"
+        >
+          <FileUp className="w-3.5 h-3.5" />
+          <span>导入</span>
+        </button>
 
-      {/* Global Search */}
-      <div className="p-2.5 border-b border-slate-100 shrink-0">
-        <div className="relative">
+        <div className="relative flex-1 min-w-0">
           <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
           <input
             type="text"
             value={searchQuery}
             onChange={(e) => onChangeSearch(e.target.value)}
-            placeholder="搜索标题、作者、批注或笔记..."
-            className="w-full rounded-lg border border-slate-200 bg-slate-50/70 pl-8 pr-7 py-1.5 text-xs text-slate-800 placeholder:text-slate-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-violet-500/25 focus:border-violet-500 transition"
+            placeholder="搜索论文、批注、笔记..."
+            className="w-full rounded-lg border border-slate-200 bg-slate-50/70 pl-7 pr-6 py-1.5 text-xs text-slate-800 placeholder:text-slate-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-violet-500/25 focus:border-violet-500 transition"
           />
           {searchQuery && (
             <button
               type="button"
               onClick={() => onChangeSearch('')}
-              className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+              className="absolute right-1.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
             >
               <X className="w-3.5 h-3.5" />
             </button>
           )}
         </div>
+
+        <button
+          type="button"
+          onClick={onOpenSettings}
+          title="应用设置 (Ctrl+,)"
+          className="p-1.5 rounded-lg text-slate-500 hover:text-slate-800 hover:bg-slate-100 transition shrink-0"
+        >
+          <Settings className="w-4 h-4" />
+        </button>
       </div>
 
       {/* Views + Folder Tree */}

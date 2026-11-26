@@ -16,7 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Improved
 
-- Removed duplicate `FoxReader` branding from the left sidebar header (now displaying `论文库`), synced the native window title bar dynamically to the active paper title, and tightened header controls.
+- Removed duplicate `FoxReader` branding from the left sidebar and merged the header and global search into a single unified `导入 + 搜索 + 设置` top bar, while syncing the native window title bar dynamically to the active paper title.
 - Removed the native window menu bar on Windows/Linux (`win.removeMenu()` + `Menu.setApplicationMenu(null)`), preventing `Alt+drag` PDF area selection from triggering menu focus while preserving `F11` fullscreen, `Ctrl+,` settings, and `Ctrl+O` import shortcuts; unified data-directory shortcuts (`pdfs/`), update checks, and GitHub link in the sidebar Settings button and `SettingsModal`, while keeping a localized Chinese system menu on macOS.
 - Added atomic temporary-file copy during document import to prevent cloud sync clients from picking up half-written files, automatic managed-file repair when re-importing a duplicate paper whose local file is missing/empty, main-process file health diagnostics (`missing`, `.icloud` placeholder, `0`-byte), and 1-click SHA-256-verified original file relinking with retry/open-directory actions in the PDF and Markdown readers.
 
