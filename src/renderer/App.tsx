@@ -152,6 +152,10 @@ export function App() {
   );
 
   useEffect(() => {
+    document.title = selectedPaper ? `${selectedPaper.title} — FoxReader` : 'FoxReader';
+  }, [selectedPaper?.title]);
+
+  useEffect(() => {
     if (selectedPaper?.fileType === 'md') {
       setRightTab('notes');
     }
@@ -350,6 +354,16 @@ export function App() {
   const handleRenameFolder = async (id: string, name: string) => {
     await window.foxreader.renameFolder(id, name);
     await refreshOverview();
+  };
+
+  const handleMoveFolder = async (id: string, parentId: string | null) => {
+    try {
+      await window.foxreader.moveFolder(id, parentId);
+      await refreshAll();
+      pushToast('success', parentId ? '已移动文件夹' : '已移至顶层文件夹');
+    } catch (error) {
+      pushToast('warning', error instanceof Error ? error.message : '移动文件夹失败');
+    }
   };
 
   const handleConfirmDeleteFolder = async () => {
@@ -766,6 +780,7 @@ export function App() {
           onImportFiles={(files, folderId) => void handleImportFiles(files, folderId)}
           onCreateFolder={handleCreateFolder}
           onRenameFolder={handleRenameFolder}
+          onMoveFolder={handleMoveFolder}
           onRequestDeleteFolder={setConfirmDeleteFolder}
           onMovePaperToFolder={handleMovePaperToFolder}
           onEditPaper={setEditingPaper}

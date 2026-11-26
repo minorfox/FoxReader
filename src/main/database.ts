@@ -524,9 +524,16 @@ export class FoxReaderDatabase {
     const folderCountRows = this.db
       .prepare('SELECT folder_id, COUNT(*) AS cnt FROM papers WHERE folder_id IS NOT NULL GROUP BY folder_id')
       .all() as { folder_id: string; cnt: number }[];
+    const parentById = new Map<string, string | null>(folders.map((f) => [f.id, f.parentId]));
     const folderCounts: Record<string, number> = {};
     for (const row of folderCountRows) {
-      folderCounts[row.folder_id] = row.cnt;
+      let cur: string | null | undefined = row.folder_id;
+      const visited = new Set<string>();
+      while (cur && !visited.has(cur)) {
+        visited.add(cur);
+        folderCounts[cur] = (folderCounts[cur] ?? 0) + row.cnt;
+        cur = parentById.get(cur);
+      }
     }
 
     const tags = this.db
@@ -602,6 +609,59 @@ export class FoxReaderDatabase {
     return mapFolder({ ...existing, name: trimmed });
   }
 
+  public moveFolder(id: string, newParentId: string | null): Folder {
+    const existing = this.db
+      .prepare('SELECT id, name, parent_id, sort_order, created_at FROM folders WHERE id = ?')
+      .get(id) as unknown as FolderRow | undefined;
+    if (!existing) {
+      throw new Error('Folder not found.');
+    }
+    if (existing.parent_id === newParentId) {
+      return mapFolder(existing);
+    }
+
+    if (newParentId !== null) {
+      const targetParent = this.db
+        .prepare('SELECT id FROM folders WHERE id = ?')
+        .get(newParentId);
+      if (!targetParent) {
+        throw new Error('Target parent folder does not exist.');
+      }
+      const cycleHit = this.db
+        .prepare(
+          `WITH RECURSIVE tree(fid) AS (
+             SELECT id FROM folders WHERE id = ?
+             UNION ALL
+             SELECT f.id FROM folders f JOIN tree t ON f.parent_id = t.fid
+           )
+           SELECT fid FROM tree WHERE fid = ?`,
+        )
+        .get(id, newParentId);
+      if (cycleHit) {
+        throw new Error('不能将文件夹移动到自身或其子文件夹下。');
+      }
+    }
+
+    const maxOrderRow = this.db
+      .prepare(
+        newParentId === null
+          ? 'SELECT COALESCE(MAX(sort_order), -1) AS max_order FROM folders WHERE parent_id IS NULL'
+          : 'SELECT COALESCE(MAX(sort_order), -1) AS max_order FROM folders WHERE parent_id = ?',
+      )
+      .get(...(newParentId === null ? [] : [newParentId])) as { max_order: number };
+
+    const nextSortOrder = maxOrderRow.max_order + 1;
+    this.db
+      .prepare('UPDATE folders SET parent_id = ?, sort_order = ? WHERE id = ?')
+      .run(newParentId, nextSortOrder, id);
+
+    return mapFolder({
+      ...existing,
+      parent_id: newParentId,
+      sort_order: nextSortOrder,
+    });
+  }
+
   public deleteFolder(id: string): DeleteFolderResult {
     return this.runInTransaction(() => {
       const descendants = this.db
@@ -673,7 +733,16 @@ export class FoxReaderDatabase {
       conditions.push('p.folder_id IS NULL');
     } else if (query.view === 'folder') {
       if (query.folderId) {
-        conditions.push('p.folder_id = ?');
+        conditions.push(
+          `p.folder_id IN (
+            WITH RECURSIVE tree(fid) AS (
+              SELECT id FROM folders WHERE id = ?
+              UNION ALL
+              SELECT f.id FROM folders f JOIN tree t ON f.parent_id = t.fid
+            )
+            SELECT fid FROM tree
+          )`,
+        );
         params.push(query.folderId);
       } else {
         conditions.push('p.folder_id IS NULL');

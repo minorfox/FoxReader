@@ -313,6 +313,7 @@ export interface FoxReaderApi {
   getLibraryOverview: () => Promise<LibraryOverview>;
   createFolder: (name: string, parentId: string | null) => Promise<Folder>;
   renameFolder: (id: string, name: string) => Promise<Folder>;
+  moveFolder: (id: string, parentId: string | null) => Promise<Folder>;
   deleteFolder: (id: string) => Promise<DeleteFolderResult>;
   listPapers: (query: PaperListQuery) => Promise<Paper[]>;
   importPaths: (filePaths: string[], folderId: string | null) => Promise<ImportPdfItemResult[]>;

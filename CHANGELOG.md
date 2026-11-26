@@ -12,11 +12,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - PDF built-in Outline (TOC) drawer with search filtering and lazy page resolution + caching in `PdfReader`.
 - Academic metadata enrichment across arXiv API, OpenAlex, and Crossref (persisting `doi`, `arxivId`, `venue`, and official/synthesized `bibtex`), plus 1-click BibTeX copy on paper cards/right sidebar/metadata modal and batch `.bib` export with automatic citation key deduplication.
 - Clickable `[P.12]` / `[第12页]` / `[label](#page=12)` page-jump links in Paper Notes preview and a 1-click `+ P.{page}` insert button while editing.
+- Folder tree movement via drag-and-drop (drop onto target folders or onto the `文件夹` header to promote to top level) and a 1-click `移到上一级` hover button on nested folders, with cycle prevention.
 
 ### Improved
 
+- Removed duplicate `FoxReader` branding from the left sidebar header (now displaying `论文库`), synced the native window title bar dynamically to the active paper title, and tightened header controls.
 - Removed the native window menu bar on Windows/Linux (`win.removeMenu()` + `Menu.setApplicationMenu(null)`), preventing `Alt+drag` PDF area selection from triggering menu focus while preserving `F11` fullscreen, `Ctrl+,` settings, and `Ctrl+O` import shortcuts; unified data-directory shortcuts (`pdfs/`), update checks, and GitHub link in the sidebar Settings button and `SettingsModal`, while keeping a localized Chinese system menu on macOS.
 - Added atomic temporary-file copy during document import to prevent cloud sync clients from picking up half-written files, automatic managed-file repair when re-importing a duplicate paper whose local file is missing/empty, main-process file health diagnostics (`missing`, `.icloud` placeholder, `0`-byte), and 1-click SHA-256-verified original file relinking with retry/open-directory actions in the PDF and Markdown readers.
+
+### Fixed
+
+- Parent folders now aggregate recursive paper counts from all descendant subfolders and list descendant papers when selected.
 
 ## [0.2.3] - 2026-11-26
 

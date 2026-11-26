@@ -44,6 +44,8 @@ const api: FoxReaderApi = {
   createFolder: (name: string, parentId: string | null) =>
     ipcRenderer.invoke('folders:create', name, parentId),
   renameFolder: (id: string, name: string) => ipcRenderer.invoke('folders:rename', id, name),
+  moveFolder: (id: string, parentId: string | null) =>
+    ipcRenderer.invoke('folders:move', id, parentId),
   deleteFolder: (id: string) => ipcRenderer.invoke('folders:delete', id),
   listPapers: (query: PaperListQuery) => ipcRenderer.invoke('papers:list', query),
   importPaths: (filePaths: string[], folderId: string | null) =>

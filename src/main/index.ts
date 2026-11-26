@@ -457,6 +457,10 @@ function registerIpcHandlers(): void {
     database.renameFolder(id, name),
   );
 
+  ipcMain.handle('folders:move', (_event, id: string, parentId: string | null) =>
+    database.moveFolder(id, parentId),
+  );
+
   ipcMain.handle('folders:delete', (_event, id: string) => database.deleteFolder(id));
 
   ipcMain.handle('papers:list', (_event, query: PaperListQuery) => database.listPapers(query));

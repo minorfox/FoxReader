@@ -72,6 +72,12 @@ async function main() {
     const managedPdfPath = path.join(dataDir, 'pdfs', `${firstImport.paper.sha256}.pdf`);
     assert.equal(fs.existsSync(managedPdfPath), true, 'Managed PDF file should exist');
 
+    const overviewWithHierarchy = db.getLibraryOverview();
+    assert.equal(overviewWithHierarchy.folderCounts[grandchild.id], 1);
+    assert.equal(overviewWithHierarchy.folderCounts[child.id], 1);
+    assert.equal(overviewWithHierarchy.folderCounts[root.id], 1);
+    assert.equal(db.listPapers({ view: 'folder', folderId: root.id }).length, 1);
+
     const duplicateCopyPath = path.join(tempRoot, 'duplicate-copy.pdf');
     fs.copyFileSync(samplePdfPath, duplicateCopyPath);
     const secondImport = await db.importPdfFile(duplicateCopyPath, null, dataDir);
@@ -498,6 +504,22 @@ We investigate sparse attention mechanisms with KaTeX formula $E = mc^2$ and uni
       orderedBatch.map((p) => p.id),
       [secondImp.paper.id, recPaper.id],
     );
+
+    // 18. Folder move (promote to top-level, reparent & cycle rejection)
+    const topFolderA = recoveryDb.createFolder('Research', null);
+    const subFolderB = recoveryDb.createFolder('QIR', topFolderA.id);
+    recoveryDb.movePaperToFolder(secondImp.paper.id, subFolderB.id);
+    const ovBeforeMove = recoveryDb.getLibraryOverview();
+    assert.equal(ovBeforeMove.folderCounts[topFolderA.id], 1);
+    assert.equal(ovBeforeMove.folderCounts[subFolderB.id], 1);
+    assert.equal(recoveryDb.listPapers({ view: 'folder', folderId: topFolderA.id }).length, 1);
+
+    assert.throws(() => recoveryDb.moveFolder(topFolderA.id, subFolderB.id));
+    const promotedB = recoveryDb.moveFolder(subFolderB.id, null);
+    assert.equal(promotedB.parentId, null);
+    const ovAfterMove = recoveryDb.getLibraryOverview();
+    assert.equal(ovAfterMove.folderCounts[topFolderA.id] ?? 0, 0);
+    assert.equal(ovAfterMove.folderCounts[subFolderB.id], 1);
 
     recoveryDb.close();
 

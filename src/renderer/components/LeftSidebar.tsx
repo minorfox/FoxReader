@@ -3,6 +3,7 @@ import {
   CheckSquare,
   ChevronDown,
   ChevronRight,
+  CornerLeftUp,
   Download,
   Folder as FolderIcon,
   FolderPlus,
@@ -20,7 +21,6 @@ import {
   X,
 } from 'lucide-react';
 import type { Folder, LibraryView, Paper, PaperStatus, Tag } from '../../shared/types';
-import appIcon from '../assets/icon.png';
 
 const TAG_CHIP_STYLES: Record<string, string> = {
   violet: 'bg-violet-50 text-violet-700 border-violet-200',
@@ -97,6 +97,7 @@ interface LeftSidebarProps {
   onImportFiles: (files: File[], folderId: string | null) => void;
   onCreateFolder: (name: string, parentId: string | null) => Promise<void>;
   onRenameFolder: (id: string, name: string) => Promise<void>;
+  onMoveFolder: (id: string, parentId: string | null) => Promise<void>;
   onRequestDeleteFolder: (folder: Folder) => void;
   onMovePaperToFolder: (paperId: string, folderId: string | null) => Promise<void>;
   onEditPaper: (paper: Paper) => void;
@@ -132,6 +133,7 @@ export function LeftSidebar({
   onImportFiles,
   onCreateFolder,
   onRenameFolder,
+  onMoveFolder,
   onRequestDeleteFolder,
   onMovePaperToFolder,
   onEditPaper,
@@ -148,6 +150,7 @@ export function LeftSidebar({
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
   const [dragOverTarget, setDragOverTarget] = useState<string | null>(null);
+  const [draggingFolderId, setDraggingFolderId] = useState<string | null>(null);
 
   const [batchMode, setBatchMode] = useState(false);
   const [batchSelectedIds, setBatchSelectedIds] = useState<Set<string>>(() => new Set());
@@ -201,6 +204,18 @@ export function LeftSidebar({
   );
 
   const folderTree = useMemo(() => buildFolderTree(folders), [folders]);
+  const folderById = useMemo(() => new Map(folders.map((f) => [f.id, f])), [folders]);
+
+  const isFolderDescendantOrSelf = (ancestorId: string, candidateId: string): boolean => {
+    let cur: string | null | undefined = candidateId;
+    const visited = new Set<string>();
+    while (cur && !visited.has(cur)) {
+      if (cur === ancestorId) return true;
+      visited.add(cur);
+      cur = folderById.get(cur)?.parentId;
+    }
+    return false;
+  };
 
   const toggleExpand = (id: string) => {
     setExpandedIds((prev) => {
@@ -245,6 +260,22 @@ export function LeftSidebar({
     e.stopPropagation();
     setDragOverTarget(null);
 
+    const draggedFolderId = e.dataTransfer.getData('application/x-foxreader-folder-id');
+    if (draggedFolderId) {
+      setDraggingFolderId(null);
+      if (targetFolderId && isFolderDescendantOrSelf(draggedFolderId, targetFolderId)) {
+        return;
+      }
+      if ((folderById.get(draggedFolderId)?.parentId ?? null) === targetFolderId) {
+        return;
+      }
+      await onMoveFolder(draggedFolderId, targetFolderId);
+      if (targetFolderId) {
+        setExpandedIds((prev) => new Set(prev).add(targetFolderId));
+      }
+      return;
+    }
+
     const paperId = e.dataTransfer.getData('application/x-foxreader-paper-id');
     if (paperId) {
       await onMovePaperToFolder(paperId, targetFolderId);
@@ -260,13 +291,29 @@ export function LeftSidebar({
     const hasChildren = node.children.length > 0;
     const isSelected = activeView === 'folder' && activeFolderId === node.id;
     const isDragOver = dragOverTarget === node.id;
+    const isBeingDragged = draggingFolderId === node.id;
     const count = folderCounts[node.id] ?? 0;
 
     return (
       <div key={node.id}>
         <div
+          draggable={renamingId !== node.id}
+          onDragStart={(e) => {
+            if (renamingId === node.id) return;
+            e.stopPropagation();
+            e.dataTransfer.setData('application/x-foxreader-folder-id', node.id);
+            e.dataTransfer.effectAllowed = 'move';
+            setDraggingFolderId(node.id);
+          }}
+          onDragEnd={() => {
+            setDraggingFolderId(null);
+            setDragOverTarget(null);
+          }}
           onClick={() => onSelectView('folder', node.id)}
           onDragOver={(e) => {
+            if (draggingFolderId && isFolderDescendantOrSelf(draggingFolderId, node.id)) {
+              return;
+            }
             e.preventDefault();
             e.stopPropagation();
             if (dragOverTarget !== node.id) setDragOverTarget(node.id);
@@ -277,6 +324,8 @@ export function LeftSidebar({
           onDrop={(e) => void handleDropOnFolder(e, node.id)}
           style={{ paddingLeft: `${8 + depth * 14}px` }}
           className={`group flex items-center gap-1 pr-1.5 py-1 rounded-md text-xs cursor-pointer transition ${
+            isBeingDragged ? 'opacity-45 ' : ''
+          }${
             isDragOver
               ? 'bg-violet-100 ring-1 ring-violet-400 text-violet-900'
               : isSelected
@@ -319,6 +368,20 @@ export function LeftSidebar({
           )}
 
           <div className="hidden group-hover:flex items-center gap-0.5 shrink-0">
+            {node.parentId !== null && (
+              <button
+                type="button"
+                title="移到上一级目录"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  const grandParentId = folderById.get(node.parentId!)?.parentId ?? null;
+                  void onMoveFolder(node.id, grandParentId);
+                }}
+                className="p-0.5 rounded hover:bg-slate-200 text-slate-500 hover:text-violet-700"
+              >
+                <CornerLeftUp className="w-3 h-3" />
+              </button>
+            )}
             <button
               type="button"
               title="新建子文件夹"
@@ -390,12 +453,8 @@ export function LeftSidebar({
       {/* Header */}
       <div className="h-12 px-3 border-b border-slate-200 flex items-center justify-between shrink-0">
         <div className="flex items-center gap-2">
-          <img
-            src={appIcon}
-            alt="FoxReader"
-            className="w-6 h-6 rounded-md shadow-xs object-cover"
-          />
-          <span className="font-semibold text-sm tracking-tight text-slate-900">FoxReader</span>
+          <Library className="w-4 h-4 text-violet-600 shrink-0" />
+          <span className="font-semibold text-sm tracking-tight text-slate-900">论文库</span>
         </div>
         <div className="flex items-center gap-1.5">
           <button
@@ -459,6 +518,7 @@ export function LeftSidebar({
         <div
           onClick={() => onSelectView('unclassified', null)}
           onDragOver={(e) => {
+            if (draggingFolderId) return;
             e.preventDefault();
             e.stopPropagation();
             if (dragOverTarget !== '__unclassified__') setDragOverTarget('__unclassified__');
@@ -466,7 +526,10 @@ export function LeftSidebar({
           onDragLeave={() => {
             if (dragOverTarget === '__unclassified__') setDragOverTarget(null);
           }}
-          onDrop={(e) => void handleDropOnFolder(e, null)}
+          onDrop={(e) => {
+            if (draggingFolderId) return;
+            void handleDropOnFolder(e, null);
+          }}
           className={`flex items-center gap-2 px-2.5 py-1.5 rounded-md text-xs cursor-pointer transition ${
             dragOverTarget === '__unclassified__'
               ? 'bg-violet-100 ring-1 ring-violet-400 text-violet-900'
@@ -482,8 +545,31 @@ export function LeftSidebar({
           <span className="text-[10px] text-slate-400 tabular-nums">{unclassifiedCount}</span>
         </div>
 
-        <div className="pt-2 pb-1 px-2 flex items-center justify-between">
-          <span className="text-[11px] font-medium text-slate-400 uppercase tracking-wider">文件夹</span>
+        <div
+          onDragOver={(e) => {
+            if (!draggingFolderId) return;
+            e.preventDefault();
+            e.stopPropagation();
+            if (dragOverTarget !== '__root_folder__') setDragOverTarget('__root_folder__');
+          }}
+          onDragLeave={() => {
+            if (dragOverTarget === '__root_folder__') setDragOverTarget(null);
+          }}
+          onDrop={(e) => {
+            if (!draggingFolderId) return;
+            void handleDropOnFolder(e, null);
+          }}
+          className={`pt-2 pb-1 px-2 flex items-center justify-between rounded-md transition ${
+            dragOverTarget === '__root_folder__'
+              ? 'bg-violet-100 ring-1 ring-violet-400'
+              : draggingFolderId
+                ? 'bg-violet-50/60 border border-dashed border-violet-300'
+                : ''
+          }`}
+        >
+          <span className="text-[11px] font-medium text-slate-400 uppercase tracking-wider">
+            {draggingFolderId ? '拖到此处移至顶层' : '文件夹'}
+          </span>
           <button
             type="button"
             title="新建根文件夹"
