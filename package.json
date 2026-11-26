@@ -1,6 +1,6 @@
 {
   "name": "foxreader",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "private": true,
   "description": "Pure-local offline desktop PDF paper manager and reader with out-of-band annotations.",
   "author": "minorfox <lihuang@swufe.edu.cn>",

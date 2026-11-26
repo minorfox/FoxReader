@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/minorfox/FoxReader/releases"><img src="https://img.shields.io/badge/Release-v0.2.2-7c3aed" alt="Release v0.2.2" /></a>
+  <a href="https://github.com/minorfox/FoxReader/releases"><img src="https://img.shields.io/badge/Release-v0.2.3-7c3aed" alt="Release v0.2.3" /></a>
   <a href="./LICENSE"><img src="https://img.shields.io/badge/License-MIT-green" alt="MIT License" /></a>
 </p>
 
@@ -30,11 +30,11 @@
 前往 [GitHub Releases](https://github.com/minorfox/FoxReader/releases) 下载对应平台安装包（由 [GitHub Actions](./.github/workflows/release.yml) 基于公开源码自动构建，并附带 `SHA256SUMS-*.txt` 校验文件）：
 
 - **Windows（x64）**：
-  - 安装版：`FoxReader.Setup.0.2.2.exe`
-  - 绿色免安装版：`FoxReader.0.2.2.exe`
+  - 安装版：`FoxReader.Setup.0.2.3.exe`
+  - 绿色免安装版：`FoxReader.0.2.3.exe`
   - > **Windows SmartScreen 提示说明**：个人开源项目未购买商业代码签名证书，首次运行若弹出「Windows 已保护你的电脑」，点击 **「更多信息 → 仍要运行」** 即可（也可在 Release 页核对 SHA-256 校验值）。
 - **macOS（Apple Silicon / Intel）**：
-  - 安装镜像：`FoxReader-0.2.2-arm64.dmg` / `FoxReader-0.2.2.dmg`
+  - 安装镜像：`FoxReader-0.2.3-arm64.dmg` / `FoxReader-0.2.3.dmg`
   - > 若 macOS 提示未签名应用无法打开，可执行：`xattr -cr /Applications/FoxReader.app` 后再打开。
 
 ## 数据目录结构
