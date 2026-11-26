@@ -7,10 +7,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Fixed
-
-- Normalized Windows NSIS and portable `artifactName` in `package.json` (`FoxReader.Setup.${version}.${ext}` / `FoxReader.${version}.${ext}`) so `SHA256SUMS.txt` matches GitHub Release asset filenames, and added space-to-dot fallback normalization in `parseSha256Sums`.
-
 ## [0.3.0] - 2026-11-26
 
 ### Added
@@ -29,6 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Normalized Windows NSIS and portable `artifactName` in `package.json` (`FoxReader.Setup.${version}.${ext}` / `FoxReader.${version}.${ext}`) so `SHA256SUMS.txt` matches GitHub Release asset filenames, and added space-to-dot fallback normalization in `parseSha256Sums`.
 - Markdown documents in `MarkdownReader` now automatically transition from `在读` to `已读` when scrolled to the bottom (or after a brief dwell for single-screen documents).
 - Parent folders now aggregate recursive paper counts from all descendant subfolders and list descendant papers when selected.
 
