@@ -598,7 +598,7 @@ function setupApplicationMenu(): void {
           {
             label: app.name,
             submenu: [
-              { role: 'about' },
+              { role: 'about', label: '关于 FoxReader' },
               { type: 'separator' },
               {
                 label: '应用设置...',
@@ -606,19 +606,19 @@ function setupApplicationMenu(): void {
                 click: () => sendMenuAction('open-settings'),
               },
               { type: 'separator' },
-              { role: 'services' },
+              { role: 'services', label: '服务' },
               { type: 'separator' },
-              { role: 'hide' },
-              { role: 'hideOthers' },
-              { role: 'unhide' },
+              { role: 'hide', label: '隐藏 FoxReader' },
+              { role: 'hideOthers', label: '隐藏其他' },
+              { role: 'unhide', label: '全部显示' },
               { type: 'separator' },
-              { role: 'quit' },
+              { role: 'quit', label: '退出 FoxReader' },
             ] as MenuItemConstructorOptions[],
           },
         ]
       : []),
     {
-      label: 'File',
+      label: '文件',
       submenu: [
         {
           label: '导入 PDF / Markdown...',
@@ -626,43 +626,37 @@ function setupApplicationMenu(): void {
           click: () => sendMenuAction('import-files'),
         },
         { type: 'separator' },
-        { role: isMac ? 'close' : 'quit' },
+        { role: isMac ? 'close' : 'quit', label: isMac ? '关闭窗口' : '退出' },
       ],
     },
     {
-      label: 'Edit',
+      label: '编辑',
       submenu: [
-        { role: 'undo' },
-        { role: 'redo' },
+        { role: 'undo', label: '撤销' },
+        { role: 'redo', label: '重做' },
         { type: 'separator' },
-        { role: 'cut' },
-        { role: 'copy' },
-        { role: 'paste' },
-        { role: 'selectAll' },
+        { role: 'cut', label: '剪切' },
+        { role: 'copy', label: '复制' },
+        { role: 'paste', label: '粘贴' },
+        { role: 'selectAll', label: '全选' },
       ],
     },
     {
-      label: 'View',
+      label: '视图',
       submenu: [
-        { role: 'reload' },
-        { role: 'forceReload' },
-        { role: 'toggleDevTools' },
+        { role: 'reload', label: '重新加载' },
+        { role: 'forceReload', label: '强制重新加载' },
+        { role: 'toggleDevTools', label: '开发者工具' },
         { type: 'separator' },
-        { role: 'resetZoom' },
-        { role: 'zoomIn' },
-        { role: 'zoomOut' },
+        { role: 'resetZoom', label: '重置缩放' },
+        { role: 'zoomIn', label: '放大' },
+        { role: 'zoomOut', label: '缩小' },
         { type: 'separator' },
-        { role: 'togglefullscreen' },
+        { role: 'togglefullscreen', label: '切换全屏' },
       ],
     },
     {
-      label: 'Window',
-      submenu: isMac
-        ? [{ role: 'minimize' }, { role: 'zoom' }, { type: 'separator' }, { role: 'front' }]
-        : [{ role: 'minimize' }, { role: 'close' }],
-    },
-    {
-      label: 'Settings',
+      label: '设置',
       submenu: [
         {
           label: '应用设置...',
