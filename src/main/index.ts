@@ -125,6 +125,18 @@ function createMainWindow(): BrowserWindow {
     }
   });
 
+  win.on('enter-full-screen', () => {
+    if (!win.isDestroyed()) {
+      win.webContents.send('app:fullscreenChanged', true);
+    }
+  });
+
+  win.on('leave-full-screen', () => {
+    if (!win.isDestroyed()) {
+      win.webContents.send('app:fullscreenChanged', false);
+    }
+  });
+
   return win;
 }
 
@@ -417,6 +429,17 @@ function registerIpcHandlers(): void {
       fs.mkdirSync(target, { recursive: true });
     }
     await shell.openPath(target);
+  });
+
+  ipcMain.handle('app:isFullscreen', () =>
+    Boolean(mainWindow && !mainWindow.isDestroyed() && mainWindow.isFullScreen()),
+  );
+
+  ipcMain.handle('app:toggleFullscreen', () => {
+    if (!mainWindow || mainWindow.isDestroyed()) return false;
+    const next = !mainWindow.isFullScreen();
+    mainWindow.setFullScreen(next);
+    return next;
   });
 
   ipcMain.handle('app:checkUpdate', () => checkLatestGithubRelease(app.getVersion()));

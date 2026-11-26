@@ -13,13 +13,16 @@ import {
   Highlighter,
   ListTree,
   Loader2,
+  Maximize,
   Maximize2,
   MessageSquarePlus,
+  Minimize,
   PanelLeftClose,
   PanelLeftOpen,
   PanelRightClose,
   PanelRightOpen,
   Search,
+  Settings,
   SquareDashedMousePointer,
   Trash2,
   X,
@@ -161,8 +164,11 @@ interface PdfReaderProps {
   pageJumpRequest?: { pageNumber: number; nonce: number } | null;
   leftCollapsed: boolean;
   rightCollapsed: boolean;
+  isFullscreen?: boolean;
   onToggleLeft: () => void;
   onToggleRight: () => void;
+  onToggleFullscreen?: () => void;
+  onOpenSettings?: () => void;
   onSaveProgress: (paperId: string, lastPage: number, lastZoom: number) => void;
   onSyncPageCount: (paperId: string, pageCount: number) => void;
   onCurrentPageChange?: (page: number) => void;
@@ -199,8 +205,11 @@ export function PdfReader({
   pageJumpRequest,
   leftCollapsed,
   rightCollapsed,
+  isFullscreen = false,
   onToggleLeft,
   onToggleRight,
+  onToggleFullscreen,
+  onOpenSettings,
   onSaveProgress,
   onSyncPageCount,
   onCurrentPageChange,
@@ -873,6 +882,17 @@ export function PdfReader({
             {leftCollapsed ? <PanelLeftOpen className="w-4 h-4" /> : <PanelLeftClose className="w-4 h-4" />}
           </button>
 
+          {leftCollapsed && onOpenSettings && (
+            <button
+              type="button"
+              onClick={onOpenSettings}
+              title="应用设置 (Ctrl+,)"
+              className="p-1.5 rounded-md text-slate-600 hover:bg-slate-100 hover:text-slate-900 transition shrink-0"
+            >
+              <Settings className="w-4 h-4" />
+            </button>
+          )}
+
           {paper && totalPages > 0 && (
             <button
               type="button"
@@ -1055,6 +1075,21 @@ export function PdfReader({
                 <Search className="w-4 h-4" />
               </button>
             </>
+          )}
+
+          {onToggleFullscreen && (
+            <button
+              type="button"
+              onClick={onToggleFullscreen}
+              title={isFullscreen ? '退出全屏 (F11)' : '进入全屏 (F11)'}
+              className={`p-1.5 rounded-md transition ${
+                isFullscreen
+                  ? 'bg-violet-50 text-violet-700 hover:bg-violet-100'
+                  : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
+              }`}
+            >
+              {isFullscreen ? <Minimize className="w-4 h-4" /> : <Maximize className="w-4 h-4" />}
+            </button>
           )}
 
           <button

@@ -11,11 +11,14 @@ import {
   Copy,
   FileText,
   Loader2,
+  Maximize,
+  Minimize,
   PanelLeftClose,
   PanelLeftOpen,
   PanelRightClose,
   PanelRightOpen,
   Search,
+  Settings,
   X,
   ZoomIn,
   ZoomOut,
@@ -56,8 +59,11 @@ interface MarkdownReaderProps {
   paper: Paper;
   leftCollapsed: boolean;
   rightCollapsed: boolean;
+  isFullscreen?: boolean;
   onToggleLeft: () => void;
   onToggleRight: () => void;
+  onToggleFullscreen?: () => void;
+  onOpenSettings?: () => void;
   onCopyText: (text: string) => void;
   onChangePaperStatus: (paperId: string, status: PaperStatus) => Promise<void>;
   reloadNonce?: number;
@@ -136,8 +142,11 @@ export function MarkdownReader({
   paper,
   leftCollapsed,
   rightCollapsed,
+  isFullscreen = false,
   onToggleLeft,
   onToggleRight,
+  onToggleFullscreen,
+  onOpenSettings,
   onCopyText,
   onChangePaperStatus,
   reloadNonce = 0,
@@ -382,6 +391,16 @@ export function MarkdownReader({
           >
             {leftCollapsed ? <PanelLeftOpen className="w-4 h-4" /> : <PanelLeftClose className="w-4 h-4" />}
           </button>
+          {leftCollapsed && onOpenSettings && (
+            <button
+              type="button"
+              onClick={onOpenSettings}
+              title="应用设置 (Ctrl+,)"
+              className="p-1.5 rounded-md text-slate-600 hover:bg-slate-100 hover:text-slate-900 transition shrink-0"
+            >
+              <Settings className="w-4 h-4" />
+            </button>
+          )}
           <span className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200 shrink-0">
             <FileText className="w-3 h-3" />
             MD
@@ -447,6 +466,21 @@ export function MarkdownReader({
           >
             <Search className="w-3.5 h-3.5" />
           </button>
+
+          {onToggleFullscreen && (
+            <button
+              type="button"
+              onClick={onToggleFullscreen}
+              title={isFullscreen ? '退出全屏 (F11)' : '进入全屏 (F11)'}
+              className={`p-1.5 rounded-md transition ${
+                isFullscreen
+                  ? 'bg-violet-50 text-violet-700 hover:bg-violet-100'
+                  : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
+              }`}
+            >
+              {isFullscreen ? <Minimize className="w-4 h-4" /> : <Maximize className="w-4 h-4" />}
+            </button>
+          )}
 
           <button
             type="button"

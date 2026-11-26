@@ -591,7 +591,7 @@ export function RightSidebar({
               ) : (
                 <ChevronRight className="w-3.5 h-3.5 text-slate-400 shrink-0" />
               )}
-              <span className="truncate">作者与机构</span>
+              <span className="truncate">文献信息</span>
               {selectedPaper.year && (
                 <span className="text-[10px] font-normal px-1.5 py-0.2 rounded bg-slate-200/70 text-slate-600 tabular-nums">
                   {selectedPaper.year}
@@ -599,28 +599,6 @@ export function RightSidebar({
               )}
             </button>
             <div className="flex items-center gap-1 shrink-0">
-              {selectedPaper.fileType !== 'md' && (
-                <button
-                  type="button"
-                  disabled={reextractingMeta}
-                  title="离线重新识别 PDF 首页标题、作者与机构"
-                  onClick={() => void onReextractMetadata(selectedPaper)}
-                  className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded border border-slate-200 bg-white text-[10px] font-medium text-slate-600 hover:border-violet-300 hover:text-violet-700 disabled:opacity-50 transition"
-                >
-                  <RefreshCw className={`w-2.5 h-2.5 ${reextractingMeta ? 'animate-spin' : ''}`} />
-                  重识别
-                </button>
-              )}
-              <button
-                type="button"
-                disabled={enrichingOnline}
-                title="联网查询 OpenAlex / arXiv / Crossref 补全元数据与 BibTeX"
-                onClick={() => void onEnrichOnline(selectedPaper)}
-                className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded border border-violet-200 bg-violet-50 text-[10px] font-medium text-violet-700 hover:bg-violet-100 disabled:opacity-50 transition"
-              >
-                <Sparkles className={`w-2.5 h-2.5 ${enrichingOnline ? 'animate-pulse' : ''}`} />
-                {enrichingOnline ? '补全中' : '联网补全'}
-              </button>
               <button
                 type="button"
                 title="一键复制 BibTeX 引用"
@@ -642,14 +620,14 @@ export function RightSidebar({
           </div>
 
           {infoExpanded && (
-            <div className="px-3 pb-2.5 space-y-2 max-h-48 overflow-y-auto">
+            <div className="px-3 pb-2.5 space-y-2 max-h-56 overflow-y-auto">
               {authorItems.length === 0 &&
               affiliationItems.length === 0 &&
               !selectedPaper.venue &&
               !selectedPaper.doi &&
               !selectedPaper.arxivId ? (
                 <div className="text-[11px] text-slate-400 leading-relaxed">
-                  暂未识别到作者、期刊或标识信息，可点击上方「重识别」或「联网补全」。
+                  暂未识别到作者、期刊或标识信息，可点击下方「重识别」或「联网补全」。
                 </div>
               ) : (
                 <>
@@ -735,6 +713,31 @@ export function RightSidebar({
                   )}
                 </>
               )}
+
+              <div className="pt-2 border-t border-slate-200/70 flex items-center gap-1.5">
+                {selectedPaper.fileType !== 'md' && (
+                  <button
+                    type="button"
+                    disabled={reextractingMeta}
+                    title="离线重新识别 PDF 首页标题、作者与机构"
+                    onClick={() => void onReextractMetadata(selectedPaper)}
+                    className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-slate-200 bg-white text-[11px] font-medium text-slate-600 hover:border-violet-300 hover:text-violet-700 disabled:opacity-50 transition"
+                  >
+                    <RefreshCw className={`w-3 h-3 ${reextractingMeta ? 'animate-spin' : ''}`} />
+                    重识别
+                  </button>
+                )}
+                <button
+                  type="button"
+                  disabled={enrichingOnline}
+                  title="联网查询 OpenAlex / arXiv / Crossref 补全元数据与 BibTeX"
+                  onClick={() => void onEnrichOnline(selectedPaper)}
+                  className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-violet-200 bg-violet-50 text-[11px] font-medium text-violet-700 hover:bg-violet-100 disabled:opacity-50 transition"
+                >
+                  <Sparkles className={`w-3 h-3 ${enrichingOnline ? 'animate-pulse' : ''}`} />
+                  {enrichingOnline ? '补全中...' : '联网补全'}
+                </button>
+              </div>
             </div>
           )}
         </div>

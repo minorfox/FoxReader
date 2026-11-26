@@ -90,6 +90,7 @@ export function App() {
   const [confirmDeleteTag, setConfirmDeleteTag] = useState<Tag | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsAutoCheckNonce, setSettingsAutoCheckNonce] = useState(0);
+  const [isFullscreen, setIsFullscreen] = useState(false);
   const [windowFileDragOver, setWindowFileDragOver] = useState(false);
   const [readerReloadNonce, setReaderReloadNonce] = useState(0);
   const [currentPdfPage, setCurrentPdfPage] = useState(1);
@@ -589,6 +590,11 @@ export function App() {
   };
 
   useEffect(() => {
+    void window.foxreader.isFullscreen().then(setIsFullscreen).catch(() => undefined);
+    return window.foxreader.onFullscreenChanged(setIsFullscreen);
+  }, []);
+
+  useEffect(() => {
     return window.foxreader.onMenuAction((action) => {
       if (action === 'open-settings') menuHandlersRef.current.openSettings();
       else if (action === 'check-updates') menuHandlersRef.current.checkUpdates();
@@ -750,7 +756,7 @@ export function App() {
       onDragOver={handleWindowDragOver}
       onDragLeave={handleWindowDragLeave}
       onDrop={handleWindowDrop}
-      className="h-screen w-screen overflow-hidden flex bg-slate-100 text-slate-900 relative"
+      className="h-screen w-screen overflow-hidden flex bg-slate-100 text-slate-900 relative border-t border-slate-200/80"
     >
       {!leftCollapsed && (
         <LeftSidebar
@@ -800,8 +806,11 @@ export function App() {
           paper={selectedPaper}
           leftCollapsed={leftCollapsed}
           rightCollapsed={rightCollapsed}
+          isFullscreen={isFullscreen}
           onToggleLeft={() => setLeftCollapsed((p) => !p)}
           onToggleRight={() => setRightCollapsed((p) => !p)}
+          onToggleFullscreen={() => void window.foxreader.toggleFullscreen()}
+          onOpenSettings={() => setSettingsOpen(true)}
           onCopyText={handleCopyText}
           onChangePaperStatus={handleChangePaperStatus}
           reloadNonce={readerReloadNonce}
@@ -818,8 +827,11 @@ export function App() {
           pageJumpRequest={pageJumpRequest}
           leftCollapsed={leftCollapsed}
           rightCollapsed={rightCollapsed}
+          isFullscreen={isFullscreen}
           onToggleLeft={() => setLeftCollapsed((p) => !p)}
           onToggleRight={() => setRightCollapsed((p) => !p)}
+          onToggleFullscreen={() => void window.foxreader.toggleFullscreen()}
+          onOpenSettings={() => setSettingsOpen(true)}
           onSaveProgress={handleSaveProgress}
           onSyncPageCount={handleSyncPageCount}
           onCurrentPageChange={setCurrentPdfPage}

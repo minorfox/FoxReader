@@ -739,7 +739,7 @@ export function LeftSidebar({
             <p className="text-xs leading-relaxed">
               {searchQuery
                 ? '未找到匹配的论文。'
-                : '当前列表暂无论文，可点击「导入 PDF」或直接将 PDF 文件拖入窗口。'}
+                : '当前列表暂无论文，可点击左上角「导入」或直接将 PDF / Markdown 文件拖入窗口。'}
             </p>
           </div>
         ) : (

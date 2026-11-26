@@ -39,6 +39,17 @@ const api: FoxReaderApi = {
       ipcRenderer.removeListener('app:menuAction', handler);
     };
   },
+  toggleFullscreen: () => ipcRenderer.invoke('app:toggleFullscreen'),
+  isFullscreen: () => ipcRenderer.invoke('app:isFullscreen'),
+  onFullscreenChanged: (listener: (isFullscreen: boolean) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, isFullscreen: boolean) => {
+      listener(isFullscreen);
+    };
+    ipcRenderer.on('app:fullscreenChanged', handler);
+    return () => {
+      ipcRenderer.removeListener('app:fullscreenChanged', handler);
+    };
+  },
   openExternalUrl: (url: string) => ipcRenderer.invoke('app:openExternal', url),
   getLibraryOverview: () => ipcRenderer.invoke('library:getOverview'),
   createFolder: (name: string, parentId: string | null) =>

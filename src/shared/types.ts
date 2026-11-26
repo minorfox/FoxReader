@@ -309,6 +309,9 @@ export interface FoxReaderApi {
   applyDownloadedUpdate: (filePath: string) => Promise<{ ok: boolean; error?: string }>;
   onUpdateDownloadState: (listener: (state: UpdateDownloadState) => void) => () => void;
   onMenuAction: (listener: (action: AppMenuAction) => void) => () => void;
+  toggleFullscreen: () => Promise<boolean>;
+  isFullscreen: () => Promise<boolean>;
+  onFullscreenChanged: (listener: (isFullscreen: boolean) => void) => () => void;
   openExternalUrl: (url: string) => Promise<void>;
   getLibraryOverview: () => Promise<LibraryOverview>;
   createFolder: (name: string, parentId: string | null) => Promise<Folder>;
