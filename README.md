@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/minorfox/FoxReader/releases"><img src="https://img.shields.io/badge/Release-v0.2.3-7c3aed" alt="Release v0.2.3" /></a>
+  <a href="https://github.com/minorfox/FoxReader/releases"><img src="https://img.shields.io/badge/Release-v0.3.0-7c3aed" alt="Release v0.3.0" /></a>
   <a href="./LICENSE"><img src="https://img.shields.io/badge/License-MIT-green" alt="MIT License" /></a>
 </p>
 
@@ -30,11 +30,11 @@
 前往 [GitHub Releases](https://github.com/minorfox/FoxReader/releases) 下载对应平台安装包（由 [GitHub Actions](./.github/workflows/release.yml) 基于公开源码自动构建，并附带 `SHA256SUMS-*.txt` 校验文件）：
 
 - **Windows（x64）**：
-  - 安装版：`FoxReader.Setup.0.2.3.exe`
-  - 绿色免安装版：`FoxReader.0.2.3.exe`
+  - 安装版：`FoxReader.Setup.0.3.0.exe`
+  - 绿色免安装版：`FoxReader.0.3.0.exe`
   - > **Windows SmartScreen 提示说明**：个人开源项目未购买商业代码签名证书，首次运行若弹出「Windows 已保护你的电脑」，点击 **「更多信息 → 仍要运行」** 即可（也可在 Release 页核对 SHA-256 校验值）。
 - **macOS（Apple Silicon / Intel）**：
-  - 安装镜像：`FoxReader-0.2.3-arm64.dmg` / `FoxReader-0.2.3.dmg`
+  - 安装镜像：`FoxReader-0.3.0-arm64.dmg` / `FoxReader-0.3.0.dmg`
   - > 若 macOS 提示未签名应用无法打开，可执行：`xattr -cr /Applications/FoxReader.app` 后再打开。
 
 ## 数据目录结构
@@ -58,7 +58,8 @@ FoxReaderData/
 - [x] **M1（工程骨架与论文库/基础阅读闭环）**：Electron + React + TS + Vite + Tailwind 工程搭建、SQLite 建表与 IPC、三栏可折叠布局、多级文件夹树、SHA-256 去重导入、拖拽归档、元数据编辑、连续滚动与视口懒渲染阅读器。
 - [x] **M2（核心批注与双向定位闭环）**：双栏选区矩形清洗、五色文本高亮、公式/图表区域框选截图、右栏批注列表与 PDF ↔ 批注双向定位。
 - [x] **M3（笔记、全文检索与收尾打磨）**：整篇 Markdown 总结笔记、标签体系、FTS5 全局检索、页内 `Ctrl+F` 搜索、OneDrive 单文件安全模式与 Windows/macOS 自动打包。
-- [ ] **P1（后续增强）**：多标签对比阅读、PDF 内置目录大纲（Outline）、导出带批注 PDF / 批量 Markdown、DOI / arXiv 元数据自动抓取。
+- [x] **P1 第一批（阅读效率与学术引用）**：PDF 内置目录大纲（Outline）、笔记内页码跳转链接、arXiv / OpenAlex / Crossref 元数据补全与 BibTeX 单篇复制 / 批量导出、文件夹树拖拽与上移。
+- [ ] **P1 后续（按需排期）**：多标签对比阅读、批量导出 Markdown（含批注与截图）。
 
 详细产品规格与表结构设计请参阅 [docs/PRD.md](./docs/PRD.md)。
 
