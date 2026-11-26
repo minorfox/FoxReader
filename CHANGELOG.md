@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Improved
+
+- Removed the redundant `文件夹` section label in the left sidebar and moved the create-root-folder button and top-level folder drop zone onto the `全部论文` row.
+
 ## [0.3.0] - 2026-11-26
 
 ### Added
