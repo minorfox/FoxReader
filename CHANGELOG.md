@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Normalized Windows NSIS and portable `artifactName` in `package.json` (`FoxReader.Setup.${version}.${ext}` / `FoxReader.${version}.${ext}`) so `SHA256SUMS.txt` matches GitHub Release asset filenames, and added space-to-dot fallback normalization in `parseSha256Sums`.
+
 ## [0.3.0] - 2026-11-26
 
 ### Added

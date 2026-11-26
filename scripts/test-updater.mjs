@@ -55,12 +55,17 @@ async function main() {
     const untrustedOnly = [sampleAssets[5]];
     assert.equal(selectReleaseAsset(untrustedOnly, 'win-nsis').asset, undefined);
 
-    // Parse SHA256SUMS.txt format
+    // Parse SHA256SUMS.txt format (including spaced electron-builder names matched against GitHub's dotted asset names)
     const shaA = 'a'.repeat(64);
     const shaB = 'B'.repeat(64);
-    const parsedSums = parseSha256Sums(`${shaA}  FoxReader.Setup.0.2.2.exe\n${shaB} *./FoxReader-0.2.2-arm64.dmg\n`);
-    assert.equal(parsedSums.get('FoxReader.Setup.0.2.2.exe'), shaA);
-    assert.equal(parsedSums.get('FoxReader-0.2.2-arm64.dmg'), shaB.toLowerCase());
+    const shaC = 'c'.repeat(64);
+    const parsedSums = parseSha256Sums(
+      `${shaA} *FoxReader Setup 0.3.0.exe\n${shaC} *FoxReader 0.3.0.exe\n${shaB} *./FoxReader-0.3.0-arm64.dmg\n`,
+    );
+    assert.equal(parsedSums.get('FoxReader.Setup.0.3.0.exe'), shaA);
+    assert.equal(parsedSums.get('FoxReader Setup 0.3.0.exe'), shaA);
+    assert.equal(parsedSums.get('FoxReader.0.3.0.exe'), shaC);
+    assert.equal(parsedSums.get('FoxReader-0.3.0-arm64.dmg'), shaB.toLowerCase());
 
     // Build silent PowerShell EncodedCommand safely with spaces & CJK path
     const encoded = buildWindowsSilentInstallCommand(

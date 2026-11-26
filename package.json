@@ -94,9 +94,13 @@
       ]
     },
     "nsis": {
+      "artifactName": "FoxReader.Setup.${version}.${ext}",
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true
+    },
+    "portable": {
+      "artifactName": "FoxReader.${version}.${ext}"
     }
   },
   "dependencies": {

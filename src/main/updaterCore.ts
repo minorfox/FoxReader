@@ -70,6 +70,11 @@ export function parseSha256Sums(content: string): Map<string, string> {
     if (fileName) {
       map.set(fileName, hash);
       map.set(fileName.toLowerCase(), hash);
+      const dotted = fileName.replace(/\s+/g, '.');
+      if (dotted !== fileName) {
+        map.set(dotted, hash);
+        map.set(dotted.toLowerCase(), hash);
+      }
     }
   }
   return map;
