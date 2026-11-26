@@ -89,6 +89,7 @@ export function App() {
   } | null>(null);
   const [confirmDeleteTag, setConfirmDeleteTag] = useState<Tag | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsAutoCheckNonce, setSettingsAutoCheckNonce] = useState(0);
   const [windowFileDragOver, setWindowFileDragOver] = useState(false);
   const [readerReloadNonce, setReaderReloadNonce] = useState(0);
   const [currentPdfPage, setCurrentPdfPage] = useState(1);
@@ -541,7 +542,7 @@ export function App() {
     [refreshPapers],
   );
 
-  const handleSelectDataDir = async () => {
+  const handleSelectDataDir = useCallback(async () => {
     const updated = await window.foxreader.selectDataDir();
     if (!updated) return;
     setDataDir(updated.dataDir);
@@ -552,7 +553,35 @@ export function App() {
     setActiveTagId(null);
     await refreshAll();
     pushToast('success', `数据目录已切换至：${updated.dataDir}`);
+  }, [refreshAll, pushToast]);
+
+  const menuHandlersRef = useRef({
+    openSettings: () => setSettingsOpen(true),
+    checkUpdates: () => {
+      setSettingsOpen(true);
+      setSettingsAutoCheckNonce((n) => n + 1);
+    },
+    selectDataDir: () => void handleSelectDataDir(),
+    importFiles: () => void handlePickAndImport(activeView === 'folder' ? activeFolderId : null),
+  });
+  menuHandlersRef.current = {
+    openSettings: () => setSettingsOpen(true),
+    checkUpdates: () => {
+      setSettingsOpen(true);
+      setSettingsAutoCheckNonce((n) => n + 1);
+    },
+    selectDataDir: () => void handleSelectDataDir(),
+    importFiles: () => void handlePickAndImport(activeView === 'folder' ? activeFolderId : null),
   };
+
+  useEffect(() => {
+    return window.foxreader.onMenuAction((action) => {
+      if (action === 'open-settings') menuHandlersRef.current.openSettings();
+      else if (action === 'check-updates') menuHandlersRef.current.checkUpdates();
+      else if (action === 'select-data-dir') menuHandlersRef.current.selectDataDir();
+      else if (action === 'import-files') menuHandlersRef.current.importFiles();
+    });
+  }, []);
 
   const handleAcknowledgeLockWarning = async () => {
     await window.foxreader.acknowledgeLockWarning();
@@ -747,7 +776,6 @@ export function App() {
             setConfirmBatchDelete({ papers: items, onDone })
           }
           onChangePaperStatus={handleChangePaperStatus}
-          onOpenSettings={() => setSettingsOpen(true)}
         />
       )}
 
@@ -909,6 +937,7 @@ export function App() {
         open={settingsOpen}
         dataDir={dataDir}
         appVersion={appVersion}
+        autoCheckNonce={settingsAutoCheckNonce}
         onClose={() => setSettingsOpen(false)}
         onSelectDataDir={handleSelectDataDir}
         onOpenDataDir={() => window.foxreader.openDataDir()}

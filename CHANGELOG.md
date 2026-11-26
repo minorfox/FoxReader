@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Improved
 
+- Replaced Electron's default `Help` menu with a dedicated `Settings` menu in the application menu bar (including direct shortcuts for Preferences, switching/opening data directories, checking for updates, GitHub repo, and About dialog), removing the redundant gear button from the left sidebar header.
 - Added atomic temporary-file copy during document import to prevent cloud sync clients from picking up half-written files, automatic managed-file repair when re-importing a duplicate paper whose local file is missing/empty, main-process file health diagnostics (`missing`, `.icloud` placeholder, `0`-byte), and 1-click SHA-256-verified original file relinking with retry/open-directory actions in the PDF and Markdown readers.
 
 ## [0.2.3] - 2026-11-26

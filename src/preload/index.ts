@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import type {
+  AppMenuAction,
   CreateAnnotationInput,
   DownloadUpdateInput,
   EnrichPaperOnlineInput,
@@ -27,6 +28,15 @@ const api: FoxReaderApi = {
     ipcRenderer.on('app:updateDownloadState', handler);
     return () => {
       ipcRenderer.removeListener('app:updateDownloadState', handler);
+    };
+  },
+  onMenuAction: (listener: (action: AppMenuAction) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, action: AppMenuAction) => {
+      listener(action);
+    };
+    ipcRenderer.on('app:menuAction', handler);
+    return () => {
+      ipcRenderer.removeListener('app:menuAction', handler);
     };
   },
   openExternalUrl: (url: string) => ipcRenderer.invoke('app:openExternal', url),

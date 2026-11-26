@@ -13,7 +13,6 @@ import {
   Plus,
   Quote,
   Search,
-  Settings,
   Square,
   Tag as TagIcon,
   Trash2,
@@ -105,7 +104,6 @@ interface LeftSidebarProps {
   onExportBatchBibtex: (papers: Paper[], onDone: () => void) => void;
   onRequestBatchDeletePapers: (papers: Paper[], onDone: () => void) => void;
   onChangePaperStatus: (paperId: string, status: PaperStatus) => Promise<void>;
-  onOpenSettings: () => void;
 }
 
 export function LeftSidebar({
@@ -140,7 +138,6 @@ export function LeftSidebar({
   onExportBatchBibtex,
   onRequestBatchDeletePapers,
   onChangePaperStatus,
-  onOpenSettings,
 }: LeftSidebarProps) {
   const [expandedIds, setExpandedIds] = useState<Set<string>>(() => new Set());
   const [creatingParentId, setCreatingParentId] = useState<string | null | undefined>(undefined);
@@ -405,14 +402,6 @@ export function LeftSidebar({
           >
             <FileUp className="w-3.5 h-3.5" />
             导入 PDF
-          </button>
-          <button
-            type="button"
-            onClick={onOpenSettings}
-            title="数据目录设置"
-            className="p-1.5 rounded-md text-slate-500 hover:text-slate-800 hover:bg-slate-100 transition"
-          >
-            <Settings className="w-4 h-4" />
           </button>
         </div>
       </div>

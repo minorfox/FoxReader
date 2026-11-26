@@ -3,7 +3,16 @@ import path from 'node:path';
 import { dirname } from 'node:path';
 import { Readable } from 'node:stream';
 import { fileURLToPath } from 'node:url';
-import { app, BrowserWindow, dialog, ipcMain, protocol, shell } from 'electron';
+import {
+  app,
+  BrowserWindow,
+  dialog,
+  ipcMain,
+  Menu,
+  type MenuItemConstructorOptions,
+  protocol,
+  shell,
+} from 'electron';
 import { exportBibtexCollection } from '../shared/bibtex.js';
 import { DataDirLock } from './dataLock.js';
 import { FoxReaderDatabase } from './database.js';
@@ -11,6 +20,7 @@ import { checkLatestGithubRelease, fetchOpenAlexMetadata, translateSelectionText
 import { SettingsManager } from './settings.js';
 import { AppUpdaterManager } from './updater.js';
 import type {
+  AppMenuAction,
   CreateAnnotationInput,
   DataDirLockInfo,
   DownloadUpdateInput,
@@ -561,6 +571,159 @@ function registerIpcHandlers(): void {
   );
 }
 
+function sendMenuAction(action: AppMenuAction): void {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    mainWindow = createMainWindow();
+  }
+  if (mainWindow.isMinimized()) {
+    mainWindow.restore();
+  }
+  mainWindow.focus();
+  if (mainWindow.webContents.isLoading()) {
+    mainWindow.webContents.once('did-finish-load', () => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('app:menuAction', action);
+      }
+    });
+    return;
+  }
+  mainWindow.webContents.send('app:menuAction', action);
+}
+
+function setupApplicationMenu(): void {
+  const isMac = process.platform === 'darwin';
+  const template: MenuItemConstructorOptions[] = [
+    ...(isMac
+      ? [
+          {
+            label: app.name,
+            submenu: [
+              { role: 'about' },
+              { type: 'separator' },
+              {
+                label: '应用设置...',
+                accelerator: 'CmdOrCtrl+,',
+                click: () => sendMenuAction('open-settings'),
+              },
+              { type: 'separator' },
+              { role: 'services' },
+              { type: 'separator' },
+              { role: 'hide' },
+              { role: 'hideOthers' },
+              { role: 'unhide' },
+              { type: 'separator' },
+              { role: 'quit' },
+            ] as MenuItemConstructorOptions[],
+          },
+        ]
+      : []),
+    {
+      label: 'File',
+      submenu: [
+        {
+          label: '导入 PDF / Markdown...',
+          accelerator: 'CmdOrCtrl+O',
+          click: () => sendMenuAction('import-files'),
+        },
+        { type: 'separator' },
+        { role: isMac ? 'close' : 'quit' },
+      ],
+    },
+    {
+      label: 'Edit',
+      submenu: [
+        { role: 'undo' },
+        { role: 'redo' },
+        { type: 'separator' },
+        { role: 'cut' },
+        { role: 'copy' },
+        { role: 'paste' },
+        { role: 'selectAll' },
+      ],
+    },
+    {
+      label: 'View',
+      submenu: [
+        { role: 'reload' },
+        { role: 'forceReload' },
+        { role: 'toggleDevTools' },
+        { type: 'separator' },
+        { role: 'resetZoom' },
+        { role: 'zoomIn' },
+        { role: 'zoomOut' },
+        { type: 'separator' },
+        { role: 'togglefullscreen' },
+      ],
+    },
+    {
+      label: 'Window',
+      submenu: isMac
+        ? [{ role: 'minimize' }, { role: 'zoom' }, { type: 'separator' }, { role: 'front' }]
+        : [{ role: 'minimize' }, { role: 'close' }],
+    },
+    {
+      label: 'Settings',
+      submenu: [
+        {
+          label: '应用设置...',
+          accelerator: 'CmdOrCtrl+,',
+          click: () => sendMenuAction('open-settings'),
+        },
+        { type: 'separator' },
+        {
+          label: '切换数据目录...',
+          click: () => sendMenuAction('select-data-dir'),
+        },
+        {
+          label: '打开数据目录',
+          click: () => {
+            void shell.openPath(settingsManager.getDataDir());
+          },
+        },
+        {
+          label: '打开 pdfs 目录',
+          click: () => {
+            const pdfsDir = path.join(settingsManager.getDataDir(), 'pdfs');
+            fs.mkdirSync(pdfsDir, { recursive: true });
+            void shell.openPath(pdfsDir);
+          },
+        },
+        { type: 'separator' },
+        {
+          label: '检查更新...',
+          click: () => sendMenuAction('check-updates'),
+        },
+        { type: 'separator' },
+        {
+          label: 'GitHub 仓库',
+          click: () => {
+            void shell.openExternal('https://github.com/minorfox/FoxReader');
+          },
+        },
+        {
+          label: '关于 FoxReader',
+          click: () => {
+            const opts = {
+              type: 'info' as const,
+              title: '关于 FoxReader',
+              message: `FoxReader v${app.getVersion()}`,
+              detail:
+                '纯本地离线科研论文管理与阅读批注工具\n作者：minorfox (lihuang@swufe.edu.cn)\nhttps://github.com/minorfox/FoxReader',
+            };
+            if (mainWindow && !mainWindow.isDestroyed()) {
+              void dialog.showMessageBox(mainWindow, opts);
+            } else {
+              void dialog.showMessageBox(opts);
+            }
+          },
+        },
+      ],
+    },
+  ];
+
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+}
+
 app.whenReady().then(() => {
   settingsManager = new SettingsManager(app.getPath('userData'));
   const dataDir = settingsManager.getDataDir();
@@ -569,6 +732,7 @@ app.whenReady().then(() => {
 
   registerFoxPdfProtocol();
   registerIpcHandlers();
+  setupApplicationMenu();
   mainWindow = createMainWindow();
 
   app.on('activate', () => {

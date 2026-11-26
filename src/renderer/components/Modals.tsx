@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   X,
   FolderOpen,
@@ -611,6 +611,7 @@ export function SettingsModal({
   open,
   dataDir,
   appVersion,
+  autoCheckNonce = 0,
   onClose,
   onSelectDataDir,
   onOpenDataDir,
@@ -624,6 +625,7 @@ export function SettingsModal({
   open: boolean;
   dataDir: string;
   appVersion: string;
+  autoCheckNonce?: number;
   onClose: () => void;
   onSelectDataDir: () => Promise<void>;
   onOpenDataDir: () => Promise<void>;
@@ -639,6 +641,7 @@ export function SettingsModal({
   const [downloadState, setDownloadState] = useState<UpdateDownloadState | null>(null);
   const [applyingUpdate, setApplyingUpdate] = useState(false);
   const [copiedEmail, setCopiedEmail] = useState(false);
+  const lastAutoCheckNonceRef = useRef(0);
 
   useEffect(() => {
     if (!open) {
@@ -655,15 +658,7 @@ export function SettingsModal({
     return unsub;
   }, [open, onSubscribeUpdateState]);
 
-  if (!open) return null;
-
-  const handleCopyEmail = async () => {
-    await navigator.clipboard.writeText('lihuang@swufe.edu.cn');
-    setCopiedEmail(true);
-    setTimeout(() => setCopiedEmail(false), 1800);
-  };
-
-  const handleCheckUpdate = async () => {
+  const handleCheckUpdate = useCallback(async () => {
     setCheckingUpdate(true);
     setDownloadState(null);
     try {
@@ -672,6 +667,21 @@ export function SettingsModal({
     } finally {
       setCheckingUpdate(false);
     }
+  }, [onCheckForUpdates]);
+
+  useEffect(() => {
+    if (open && autoCheckNonce > 0 && autoCheckNonce !== lastAutoCheckNonceRef.current) {
+      lastAutoCheckNonceRef.current = autoCheckNonce;
+      void handleCheckUpdate();
+    }
+  }, [open, autoCheckNonce, handleCheckUpdate]);
+
+  if (!open) return null;
+
+  const handleCopyEmail = async () => {
+    await navigator.clipboard.writeText('lihuang@swufe.edu.cn');
+    setCopiedEmail(true);
+    setTimeout(() => setCopiedEmail(false), 1800);
   };
 
   const handleStartDownload = async () => {

@@ -245,6 +245,8 @@ export interface ExportBibtexResult {
 
 export type UpdateInstallMode = 'win-nsis' | 'win-portable' | 'mac-arm64' | 'mac-x64' | 'dev';
 
+export type AppMenuAction = 'open-settings' | 'select-data-dir' | 'check-updates' | 'import-files';
+
 export interface UpdateCheckResult {
   currentVersion: string;
   latestVersion: string;
@@ -306,6 +308,7 @@ export interface FoxReaderApi {
   cancelUpdateDownload: () => Promise<void>;
   applyDownloadedUpdate: (filePath: string) => Promise<{ ok: boolean; error?: string }>;
   onUpdateDownloadState: (listener: (state: UpdateDownloadState) => void) => () => void;
+  onMenuAction: (listener: (action: AppMenuAction) => void) => () => void;
   openExternalUrl: (url: string) => Promise<void>;
   getLibraryOverview: () => Promise<LibraryOverview>;
   createFolder: (name: string, parentId: string | null) => Promise<Folder>;
