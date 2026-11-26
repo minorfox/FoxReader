@@ -18,6 +18,7 @@ export interface ExtractedPdfHeader {
   affiliations?: string;
   year?: number | null;
   doi?: string;
+  arxivId?: string;
 }
 
 interface TextLine {
@@ -214,6 +215,15 @@ function extractDoi(fullText: string): string | undefined {
   return match[1].replace(/[.,;)\]]+$/, '');
 }
 
+function extractArxivId(fullText: string): string | undefined {
+  const prefixMatch = /\barXiv\s*:\s*(\d{4}\.\d{4,5}(?:v\d+)?|[a-z-]+(?:\.[A-Z]{2})?\/\d{7}(?:v\d+)?)/i.exec(
+    fullText,
+  );
+  if (prefixMatch?.[1]) return prefixMatch[1];
+  const urlMatch = /\barxiv\.org\/(?:abs|pdf)\/(\d{4}\.\d{4,5}(?:v\d+)?)/i.exec(fullText);
+  return urlMatch?.[1];
+}
+
 function extractYear(lines: TextLine[], creationDate?: string): number | null {
   const currentYear = new Date().getFullYear();
   const isValidYear = (y: number) => y >= 1950 && y <= currentYear + 1;
@@ -399,6 +409,7 @@ export function parsePdfHeaderFromPage1(
   const lines = groupPageItemsIntoLines(items);
   const fullText = lines.map((l) => l.text).join('\n');
   const doi = extractDoi(fullText);
+  const arxivId = extractArxivId(fullText);
   const year = extractYear(lines, infoMeta?.creationDate);
 
   const infoTitle =
@@ -416,6 +427,7 @@ export function parsePdfHeaderFromPage1(
       authors: infoAuthors.length > 0 ? infoAuthors.join(', ') : undefined,
       year,
       doi,
+      arxivId,
     };
   }
 
@@ -587,5 +599,6 @@ export function parsePdfHeaderFromPage1(
     affiliations: affiliationList.length > 0 ? affiliationList.join('; ') : undefined,
     year,
     doi,
+    arxivId,
   };
 }

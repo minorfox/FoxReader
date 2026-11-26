@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import {
+  BookMarked,
   BookOpen,
   Building2,
   Check,
@@ -14,6 +15,7 @@ import {
   Image as ImageIcon,
   MessageSquare,
   Pencil,
+  Quote,
   RefreshCw,
   Search,
   Sparkles,
@@ -29,6 +31,7 @@ import {
   type PaperNote,
   type UpdateAnnotationInput,
 } from '../../shared/types';
+import { parseFoxPageHref, transformNotePageLinks } from '../lib/notePageLinks';
 import { getSnapshotUrl } from '../lib/pdf';
 
 type KindFilter = 'all' | 'commented' | 'area';
@@ -42,12 +45,15 @@ interface RightSidebarProps {
   cardRevealRequest: { id: string; focusComment: boolean; nonce: number } | null;
   reextractingMeta?: boolean;
   enrichingOnline?: boolean;
+  currentPdfPage?: number;
   onChangeTab: (tab: 'annotations' | 'notes') => void;
   onJumpToAnnotation: (annotation: Annotation) => void;
+  onJumpToPage: (pageNumber: number) => void;
   onUpdateAnnotation: (id: string, input: UpdateAnnotationInput) => Promise<void>;
   onDeleteAnnotation: (id: string) => Promise<void>;
   onSaveNote: (paperId: string, contentMd: string) => Promise<void>;
   onCopyText: (text: string) => void;
+  onCopyBibtex: (paper: Paper) => void;
   onSearchTerm: (term: string) => void;
   onEditPaperMetadata: (paper: Paper) => void;
   onReextractMetadata: (paper: Paper) => Promise<void>;
@@ -279,20 +285,29 @@ function AnnotationCard({
 function PaperNoteEditor({
   paperId,
   note,
+  isPdf,
+  currentPdfPage,
+  onJumpToPage,
   onSaveNote,
 }: {
   paperId: string;
   note: PaperNote | null;
+  isPdf: boolean;
+  currentPdfPage?: number;
+  onJumpToPage: (pageNumber: number) => void;
   onSaveNote: (paperId: string, contentMd: string) => Promise<void>;
 }) {
   const [mode, setMode] = useState<'edit' | 'preview'>('edit');
   const [draft, setDraft] = useState(note?.contentMd ?? '');
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved'>('idle');
 
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const activePaperIdRef = useRef(paperId);
   const savedContentRef = useRef(note?.contentMd ?? '');
   const draftRef = useRef(note?.contentMd ?? '');
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const previewMarkdown = useMemo(() => transformNotePageLinks(draft), [draft]);
 
   useEffect(() => {
     const incoming = note?.contentMd ?? '';
@@ -357,33 +372,69 @@ function PaperNoteEditor({
     }, 500);
   };
 
+  const insertCurrentPageLink = () => {
+    if (!currentPdfPage || currentPdfPage < 1) return;
+    const token = `[P.${currentPdfPage}]`;
+    const el = textareaRef.current;
+    const start = el ? el.selectionStart : draft.length;
+    const end = el ? el.selectionEnd : draft.length;
+    const nextVal = `${draft.slice(0, start)}${token}${draft.slice(end)}`;
+    setDraft(nextVal);
+    draftRef.current = nextVal;
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    const currentId = paperId;
+    debounceRef.current = setTimeout(() => {
+      void flush(currentId, nextVal);
+    }, 500);
+    requestAnimationFrame(() => {
+      if (textareaRef.current) {
+        textareaRef.current.focus();
+        const pos = start + token.length;
+        textareaRef.current.setSelectionRange(pos, pos);
+      }
+    });
+  };
+
   return (
     <div className="h-full flex flex-col">
       <div className="px-3 py-2 border-b border-slate-100 flex items-center justify-between gap-2 bg-slate-50/50 shrink-0">
-        <div className="inline-flex rounded-lg border border-slate-200 bg-white p-0.5">
-          <button
-            type="button"
-            onClick={() => setMode('edit')}
-            className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-medium transition ${
-              mode === 'edit' ? 'bg-violet-600 text-white' : 'text-slate-600 hover:text-slate-900'
-            }`}
-          >
-            <Pencil className="w-3 h-3" />
-            编辑
-          </button>
-          <button
-            type="button"
-            onClick={() => setMode('preview')}
-            className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-medium transition ${
-              mode === 'preview' ? 'bg-violet-600 text-white' : 'text-slate-600 hover:text-slate-900'
-            }`}
-          >
-            <Eye className="w-3 h-3" />
-            预览
-          </button>
+        <div className="flex items-center gap-1.5">
+          <div className="inline-flex rounded-lg border border-slate-200 bg-white p-0.5">
+            <button
+              type="button"
+              onClick={() => setMode('edit')}
+              className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-medium transition ${
+                mode === 'edit' ? 'bg-violet-600 text-white' : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <Pencil className="w-3 h-3" />
+              编辑
+            </button>
+            <button
+              type="button"
+              onClick={() => setMode('preview')}
+              className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-medium transition ${
+                mode === 'preview' ? 'bg-violet-600 text-white' : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <Eye className="w-3 h-3" />
+              预览
+            </button>
+          </div>
+
+          {mode === 'edit' && isPdf && currentPdfPage && currentPdfPage >= 1 && (
+            <button
+              type="button"
+              onClick={insertCurrentPageLink}
+              title={`在光标处插入第 ${currentPdfPage} 页跳转链接 [P.${currentPdfPage}]`}
+              className="px-2 py-1 rounded-md border border-violet-200 bg-violet-50 text-[11px] font-medium text-violet-700 hover:bg-violet-100 tabular-nums transition"
+            >
+              + P.{currentPdfPage}
+            </button>
+          )}
         </div>
 
-        <span className="text-[11px] text-slate-400">
+        <span className="text-[11px] text-slate-400 truncate">
           {saveState === 'saving'
             ? '保存中...'
             : saveState === 'saved'
@@ -396,17 +447,44 @@ function PaperNoteEditor({
 
       {mode === 'edit' ? (
         <textarea
+          ref={textareaRef}
           value={draft}
           onChange={handleChange}
           onBlur={() => void flush(paperId, draft)}
-          placeholder={`# 论文总结笔记\n\n- **核心问题**：\n- **方法亮点**：\n- **实验结论**：\n- **局限与启发**：`}
+          placeholder={`# 论文总结笔记\n\n支持 Markdown 与 [P.12] / [第12页] 页码跳转链接：\n- **核心问题**：[P.1]\n- **方法亮点**：\n- **实验结论**：`}
           className="flex-1 w-full resize-none p-3.5 text-xs leading-relaxed font-mono text-slate-800 placeholder:text-slate-400 focus:outline-none select-text"
         />
       ) : (
         <div className="flex-1 overflow-y-auto p-4 select-text">
           {draft.trim() ? (
             <div className="fox-markdown">
-              <ReactMarkdown remarkPlugins={[remarkGfm]}>{draft}</ReactMarkdown>
+              <ReactMarkdown
+                remarkPlugins={[remarkGfm]}
+                components={{
+                  a: ({ href, children, ...rest }) => {
+                    const pageNum = parseFoxPageHref(href);
+                    if (pageNum !== null && isPdf) {
+                      return (
+                        <button
+                          type="button"
+                          onClick={() => onJumpToPage(pageNum)}
+                          title={`跳转到 PDF 第 ${pageNum} 页`}
+                          className="inline-flex items-center px-1.5 py-0.2 mx-0.5 rounded bg-violet-100 text-violet-800 hover:bg-violet-200 font-medium text-[11px] tabular-nums align-baseline transition cursor-pointer"
+                        >
+                          {children}
+                        </button>
+                      );
+                    }
+                    return (
+                      <a href={href} {...rest}>
+                        {children}
+                      </a>
+                    );
+                  },
+                }}
+              >
+                {previewMarkdown}
+              </ReactMarkdown>
             </div>
           ) : (
             <div className="text-xs text-slate-400 text-center py-8">暂无笔记内容，切换至「编辑」开始记录。</div>
@@ -426,12 +504,15 @@ export function RightSidebar({
   cardRevealRequest,
   reextractingMeta = false,
   enrichingOnline = false,
+  currentPdfPage,
   onChangeTab,
   onJumpToAnnotation,
+  onJumpToPage,
   onUpdateAnnotation,
   onDeleteAnnotation,
   onSaveNote,
   onCopyText,
+  onCopyBibtex,
   onSearchTerm,
   onEditPaperMetadata,
   onReextractMetadata,
@@ -533,7 +614,7 @@ export function RightSidebar({
               <button
                 type="button"
                 disabled={enrichingOnline}
-                title="联网查询 OpenAlex 补全作者与机构信息"
+                title="联网查询 OpenAlex / arXiv / Crossref 补全元数据与 BibTeX"
                 onClick={() => void onEnrichOnline(selectedPaper)}
                 className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded border border-violet-200 bg-violet-50 text-[10px] font-medium text-violet-700 hover:bg-violet-100 disabled:opacity-50 transition"
               >
@@ -542,7 +623,16 @@ export function RightSidebar({
               </button>
               <button
                 type="button"
-                title="手动编辑标题、作者与机构"
+                title="一键复制 BibTeX 引用"
+                onClick={() => onCopyBibtex(selectedPaper)}
+                className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded border border-slate-200 bg-white text-[10px] font-medium text-slate-600 hover:border-violet-300 hover:text-violet-700 transition"
+              >
+                <Quote className="w-2.5 h-2.5" />
+                BibTeX
+              </button>
+              <button
+                type="button"
+                title="手动编辑标题、作者与 BibTeX"
                 onClick={() => onEditPaperMetadata(selectedPaper)}
                 className="p-1 rounded border border-slate-200 bg-white text-slate-500 hover:text-violet-700 hover:border-violet-300 transition"
               >
@@ -552,13 +642,52 @@ export function RightSidebar({
           </div>
 
           {infoExpanded && (
-            <div className="px-3 pb-2.5 space-y-2 max-h-44 overflow-y-auto">
-              {authorItems.length === 0 && affiliationItems.length === 0 ? (
+            <div className="px-3 pb-2.5 space-y-2 max-h-48 overflow-y-auto">
+              {authorItems.length === 0 &&
+              affiliationItems.length === 0 &&
+              !selectedPaper.venue &&
+              !selectedPaper.doi &&
+              !selectedPaper.arxivId ? (
                 <div className="text-[11px] text-slate-400 leading-relaxed">
-                  暂未识别到作者或机构，可点击上方「重识别」或「联网补全」。
+                  暂未识别到作者、期刊或标识信息，可点击上方「重识别」或「联网补全」。
                 </div>
               ) : (
                 <>
+                  {(selectedPaper.venue || selectedPaper.doi || selectedPaper.arxivId) && (
+                    <div className="flex flex-wrap gap-1">
+                      {selectedPaper.venue && (
+                        <button
+                          type="button"
+                          title={`按期刊/会议「${selectedPaper.venue}」搜索论文库`}
+                          onClick={() => onSearchTerm(selectedPaper.venue)}
+                          className="inline-flex items-center gap-1 max-w-full rounded-md bg-emerald-50/80 border border-emerald-200/80 px-2 py-0.5 text-[11px] text-emerald-900 hover:border-emerald-400 hover:bg-emerald-100 transition text-left"
+                        >
+                          <BookMarked className="w-2.5 h-2.5 text-emerald-600 shrink-0" />
+                          <span className="truncate">{selectedPaper.venue}</span>
+                        </button>
+                      )}
+                      {selectedPaper.doi && (
+                        <button
+                          type="button"
+                          title="点击复制 DOI"
+                          onClick={() => onCopyText(selectedPaper.doi)}
+                          className="inline-flex items-center gap-1 max-w-full rounded-md bg-white border border-slate-200 px-2 py-0.5 text-[10px] font-mono text-slate-600 hover:border-violet-300 hover:text-violet-700 transition"
+                        >
+                          <span className="truncate">DOI: {selectedPaper.doi}</span>
+                        </button>
+                      )}
+                      {selectedPaper.arxivId && (
+                        <button
+                          type="button"
+                          title="点击复制 arXiv ID"
+                          onClick={() => onCopyText(selectedPaper.arxivId)}
+                          className="inline-flex items-center gap-1 max-w-full rounded-md bg-white border border-slate-200 px-2 py-0.5 text-[10px] font-mono text-slate-600 hover:border-violet-300 hover:text-violet-700 transition"
+                        >
+                          <span className="truncate">arXiv: {selectedPaper.arxivId}</span>
+                        </button>
+                      )}
+                    </div>
+                  )}
                   {authorItems.length > 0 && (
                     <div className="space-y-1">
                       <div className="flex items-center gap-1 text-[10px] font-medium text-slate-400">
@@ -713,7 +842,14 @@ export function RightSidebar({
             </div>
           )
         ) : (
-          <PaperNoteEditor paperId={selectedPaper.id} note={note} onSaveNote={onSaveNote} />
+          <PaperNoteEditor
+            paperId={selectedPaper.id}
+            note={note}
+            isPdf={selectedPaper.fileType !== 'md'}
+            currentPdfPage={currentPdfPage}
+            onJumpToPage={onJumpToPage}
+            onSaveNote={onSaveNote}
+          />
         )}
       </div>
     </aside>

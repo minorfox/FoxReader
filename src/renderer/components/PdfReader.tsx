@@ -11,6 +11,7 @@ import {
   Copy,
   FileUp,
   Highlighter,
+  ListTree,
   Loader2,
   Maximize2,
   MessageSquarePlus,
@@ -93,18 +94,78 @@ function buildSearchRegex(query: string): RegExp | null {
   return new RegExp(parts.join('\\s*'), 'gi');
 }
 
+interface PdfOutlineNode {
+  id: string;
+  title: string;
+  dest: string | unknown[] | null;
+  items: PdfOutlineNode[];
+}
+
+function normalizeOutlineItems(raw: unknown[], prefix = 'o'): PdfOutlineNode[] {
+  const result: PdfOutlineNode[] = [];
+  for (let i = 0; i < raw.length; i += 1) {
+    const item = raw[i] as { title?: unknown; dest?: unknown; items?: unknown } | null;
+    if (!item || typeof item !== 'object') continue;
+    const id = `${prefix}-${i}`;
+    const title = typeof item.title === 'string' && item.title.trim() ? item.title.trim() : '无标题章节';
+    const dest =
+      typeof item.dest === 'string' || Array.isArray(item.dest) ? item.dest : null;
+    const children = Array.isArray(item.items) ? normalizeOutlineItems(item.items, id) : [];
+    result.push({ id, title, dest, items: children });
+  }
+  return result;
+}
+
+function filterOutlineTree(nodes: PdfOutlineNode[], query: string): PdfOutlineNode[] {
+  const needle = query.trim().toLowerCase();
+  if (!needle) return nodes;
+  const filtered: PdfOutlineNode[] = [];
+  for (const node of nodes) {
+    const matchedChildren = filterOutlineTree(node.items, needle);
+    if (node.title.toLowerCase().includes(needle) || matchedChildren.length > 0) {
+      filtered.push({ ...node, items: matchedChildren });
+    }
+  }
+  return filtered;
+}
+
+async function resolveOutlinePageNumber(
+  doc: PDFDocumentProxy,
+  dest: string | unknown[] | null,
+): Promise<number | null> {
+  if (!dest) return null;
+  const explicitDest =
+    typeof dest === 'string' ? await doc.getDestination(dest).catch(() => null) : dest;
+  if (!Array.isArray(explicitDest) || explicitDest.length === 0) return null;
+  const pageRef = explicitDest[0];
+  if (typeof pageRef === 'number' && Number.isFinite(pageRef)) {
+    return pageRef + 1;
+  }
+  if (pageRef && typeof pageRef === 'object') {
+    try {
+      const idx = await doc.getPageIndex(pageRef as Parameters<PDFDocumentProxy['getPageIndex']>[0]);
+      return idx + 1;
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
 interface PdfReaderProps {
   paper: Paper | null;
   annotations: Annotation[];
   activeColor: AnnotationColor;
   selectedAnnotationId: string | null;
   jumpRequest: { annotation: Annotation; nonce: number } | null;
+  pageJumpRequest?: { pageNumber: number; nonce: number } | null;
   leftCollapsed: boolean;
   rightCollapsed: boolean;
   onToggleLeft: () => void;
   onToggleRight: () => void;
   onSaveProgress: (paperId: string, lastPage: number, lastZoom: number) => void;
   onSyncPageCount: (paperId: string, pageCount: number) => void;
+  onCurrentPageChange?: (page: number) => void;
   onPickAndImport: () => void;
   onCreateTextAnnotation: (payload: {
     pageNumber: number;
@@ -135,12 +196,14 @@ export function PdfReader({
   activeColor,
   selectedAnnotationId,
   jumpRequest,
+  pageJumpRequest,
   leftCollapsed,
   rightCollapsed,
   onToggleLeft,
   onToggleRight,
   onSaveProgress,
   onSyncPageCount,
+  onCurrentPageChange,
   onPickAndImport,
   onCreateTextAnnotation,
   onCreateAreaAnnotation,
@@ -163,6 +226,13 @@ export function PdfReader({
   const [retryNonce, setRetryNonce] = useState(0);
   const [fileStatus, setFileStatus] = useState<PaperFileStatus | null>(null);
   const [relinking, setRelinking] = useState(false);
+
+  const [outline, setOutline] = useState<PdfOutlineNode[]>([]);
+  const [outlineOpen, setOutlineOpen] = useState(false);
+  const [outlineFilter, setOutlineFilter] = useState('');
+  const [expandedOutlineIds, setExpandedOutlineIds] = useState<Set<string>>(() => new Set());
+  const [activeOutlineId, setActiveOutlineId] = useState<string | null>(null);
+  const outlinePageCacheRef = useRef<Map<string, number>>(new Map());
 
   const [currentPage, setCurrentPage] = useState(1);
   const [pageInput, setPageInput] = useState('1');
@@ -281,12 +351,17 @@ export function PdfReader({
     setFindMatches([]);
     setActiveMatchIdx(0);
     pageTextCacheRef.current.clear();
+    outlinePageCacheRef.current.clear();
+    setOutline([]);
+    setOutlineFilter('');
+    setActiveOutlineId(null);
 
     if (!paper) {
       setPdfDoc(null);
       setPageSizes([]);
       setLoadError(null);
       setFileStatus(null);
+      setOutlineOpen(false);
       setLoading(false);
       return;
     }
@@ -340,6 +415,16 @@ export function PdfReader({
         setPageSizes(initialSizes);
         setPdfDoc(doc);
         setLoading(false);
+
+        const rawOutline = await doc.getOutline().catch(() => null);
+        if (!cancelled) {
+          const normalized = Array.isArray(rawOutline) ? normalizeOutlineItems(rawOutline) : [];
+          setOutline(normalized);
+          setExpandedOutlineIds(new Set(normalized.map((n) => n.id)));
+          if (normalized.length === 0) {
+            setOutlineOpen(false);
+          }
+        }
       } catch (err) {
         if (!cancelled) {
           setLoading(false);
@@ -399,6 +484,87 @@ export function PdfReader({
       });
     }
   }, [pdfDoc, pageSizes.length, scrollToPage]);
+
+  useEffect(() => {
+    onCurrentPageChange?.(currentPage);
+  }, [currentPage, onCurrentPageChange]);
+
+  useEffect(() => {
+    if (!pageJumpRequest || !pdfDoc || pageSizes.length === 0) return;
+    scrollToPage(pageJumpRequest.pageNumber, 'smooth');
+  }, [pageJumpRequest, pdfDoc, pageSizes.length, scrollToPage]);
+
+  const filteredOutline = useMemo(
+    () => filterOutlineTree(outline, outlineFilter),
+    [outline, outlineFilter],
+  );
+
+  const handleSelectOutlineNode = useCallback(
+    async (node: PdfOutlineNode) => {
+      if (!pdfDoc) return;
+      setActiveOutlineId(node.id);
+      let targetPage = outlinePageCacheRef.current.get(node.id);
+      if (!targetPage) {
+        const resolved = await resolveOutlinePageNumber(pdfDoc, node.dest);
+        if (resolved && resolved >= 1) {
+          targetPage = resolved;
+          outlinePageCacheRef.current.set(node.id, resolved);
+        }
+      }
+      if (targetPage) {
+        scrollToPage(targetPage, 'smooth');
+      }
+    },
+    [pdfDoc, scrollToPage],
+  );
+
+  const toggleOutlineNodeExpand = useCallback((id: string) => {
+    setExpandedOutlineIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+
+  const renderOutlineNodes = (nodes: PdfOutlineNode[], depth: number): React.ReactNode => {
+    const filterActive = outlineFilter.trim().length > 0;
+    return nodes.map((node) => {
+      const hasChildren = node.items.length > 0;
+      const isExpanded = filterActive || expandedOutlineIds.has(node.id);
+      const isActive = activeOutlineId === node.id;
+      return (
+        <div key={node.id}>
+          <div
+            style={{ paddingLeft: `${8 + depth * 12}px` }}
+            className={`flex items-center gap-1 pr-2 py-1 rounded-md text-xs cursor-pointer transition ${
+              isActive
+                ? 'bg-violet-50 text-violet-900 font-medium'
+                : 'text-slate-700 hover:bg-slate-100'
+            }`}
+            onClick={() => void handleSelectOutlineNode(node)}
+          >
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                if (hasChildren) toggleOutlineNodeExpand(node.id);
+              }}
+              className={`p-0.5 rounded hover:bg-slate-200/70 shrink-0 ${
+                hasChildren ? 'text-slate-400 hover:text-slate-700' : 'opacity-0 pointer-events-none'
+              }`}
+            >
+              {isExpanded ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
+            </button>
+            <span className="truncate flex-1" title={node.title}>
+              {node.title}
+            </span>
+          </div>
+          {hasChildren && isExpanded && renderOutlineNodes(node.items, depth + 1)}
+        </div>
+      );
+    });
+  };
 
   // Handle bidirectional jump from right sidebar annotation card -> PDF position
   useEffect(() => {
@@ -707,6 +873,31 @@ export function PdfReader({
             {leftCollapsed ? <PanelLeftOpen className="w-4 h-4" /> : <PanelLeftClose className="w-4 h-4" />}
           </button>
 
+          {paper && totalPages > 0 && (
+            <button
+              type="button"
+              disabled={outline.length === 0}
+              onClick={() => setOutlineOpen((p) => !p)}
+              title={
+                outline.length > 0
+                  ? outlineOpen
+                    ? '收起 PDF 目录大纲'
+                    : '展开 PDF 目录大纲'
+                  : '该 PDF 未包含内置目录大纲'
+              }
+              className={`inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium transition shrink-0 ${
+                outline.length === 0
+                  ? 'text-slate-300 cursor-not-allowed'
+                  : outlineOpen
+                    ? 'bg-violet-50 text-violet-700 border border-violet-200'
+                    : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
+              }`}
+            >
+              <ListTree className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">目录</span>
+            </button>
+          )}
+
           <div className="truncate text-xs font-medium text-slate-700">
             {paper ? paper.title : 'FoxReader 阅读工作台'}
           </div>
@@ -877,9 +1068,54 @@ export function PdfReader({
         </div>
       </header>
 
-      {/* Main Scrollable PDF Canvas Viewport */}
-      <div
-        ref={scrollContainerRef}
+      {/* Main Body: Optional Outline Drawer + Scrollable PDF Canvas Viewport */}
+      <div className="flex-1 min-h-0 flex relative overflow-hidden">
+        {paper && outlineOpen && outline.length > 0 && (
+          <aside className="w-64 shrink-0 border-r border-slate-200 bg-white flex flex-col h-full select-none">
+            <div className="px-3 py-2 border-b border-slate-100 flex items-center justify-between gap-2 shrink-0">
+              <span className="text-xs font-semibold text-slate-800">目录大纲</span>
+              <button
+                type="button"
+                onClick={() => setOutlineOpen(false)}
+                title="关闭目录大纲"
+                className="p-1 rounded text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+            <div className="p-2 border-b border-slate-100 shrink-0">
+              <div className="relative">
+                <Search className="w-3 h-3 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
+                <input
+                  type="text"
+                  value={outlineFilter}
+                  onChange={(e) => setOutlineFilter(e.target.value)}
+                  placeholder="过滤章节..."
+                  className="w-full rounded-md border border-slate-200 bg-slate-50/70 pl-7 pr-6 py-1 text-xs text-slate-800 placeholder:text-slate-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500 transition"
+                />
+                {outlineFilter && (
+                  <button
+                    type="button"
+                    onClick={() => setOutlineFilter('')}
+                    className="absolute right-1.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                )}
+              </div>
+            </div>
+            <div className="flex-1 overflow-y-auto p-1.5 space-y-0.5">
+              {filteredOutline.length > 0 ? (
+                renderOutlineNodes(filteredOutline, 0)
+              ) : (
+                <div className="text-xs text-slate-400 text-center py-6">未找到匹配章节</div>
+              )}
+            </div>
+          </aside>
+        )}
+
+        <div
+          ref={scrollContainerRef}
         onMouseUp={(e) => {
           if (annotationMode !== 'text' || e.altKey) return;
           requestAnimationFrame(() => {
@@ -980,6 +1216,7 @@ export function PdfReader({
             })}
           </div>
         ) : null}
+        </div>
       </div>
 
       {/* Floating Ctrl+F Search Bar */}

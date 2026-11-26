@@ -83,6 +83,10 @@ export interface Paper {
   authors: string;
   affiliations: string;
   year: number | null;
+  doi: string;
+  arxivId: string;
+  venue: string;
+  bibtex: string;
   folderId: string | null;
   status: PaperStatus;
   pageCount: number;
@@ -194,6 +198,10 @@ export interface UpdatePaperMetadataInput {
   authors?: string;
   affiliations?: string;
   year?: number | null;
+  doi?: string;
+  arxivId?: string;
+  venue?: string;
+  bibtex?: string;
   status?: PaperStatus;
   folderId?: string | null;
   pageCount?: number;
@@ -210,6 +218,7 @@ export interface DeletePapersResult {
 export interface EnrichPaperOnlineInput {
   titleHint: string;
   doiHint?: string;
+  arxivIdHint?: string;
 }
 
 export interface EnrichPaperOnlineResult {
@@ -218,7 +227,19 @@ export interface EnrichPaperOnlineResult {
   authors?: string;
   affiliations?: string;
   year?: number | null;
+  doi?: string;
+  arxivId?: string;
+  venue?: string;
+  bibtex?: string;
   source?: string;
+  error?: string;
+}
+
+export interface ExportBibtexResult {
+  ok: boolean;
+  canceled?: boolean;
+  filePath?: string;
+  count?: number;
   error?: string;
 }
 
@@ -299,6 +320,7 @@ export interface FoxReaderApi {
   readMarkdownContent: (sha256: string) => Promise<string>;
   checkPaperFileStatus: (paperId: string) => Promise<PaperFileStatus>;
   relinkPaperFile: (paperId: string) => Promise<RelinkPaperFileResult>;
+  exportBibtex: (paperIds: string[], defaultFileName?: string) => Promise<ExportBibtexResult>;
   movePaperToFolder: (paperId: string, folderId: string | null) => Promise<Paper>;
   updatePaperProgress: (paperId: string, lastPage: number, lastZoom: number) => Promise<void>;
   deletePaper: (paperId: string) => Promise<void>;

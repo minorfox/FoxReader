@@ -303,6 +303,10 @@ async function main() {
     const migratedPaper = migratedDb.getPaperById('legacy-1');
     assert.ok(migratedPaper);
     assert.equal(migratedPaper.affiliations, '');
+    assert.equal(migratedPaper.doi, '');
+    assert.equal(migratedPaper.arxivId, '');
+    assert.equal(migratedPaper.venue, '');
+    assert.equal(migratedPaper.bibtex, '');
     assert.equal(migratedPaper.fileType, 'pdf');
     assert.equal(migratedDb.listPapers({ view: 'all', search: 'Quantum' }).length, 1);
 
@@ -469,6 +473,32 @@ We investigate sparse attention mechanisms with KaTeX formula $E = mc^2$ and uni
     assert.equal(okRelink.ok, true);
     assert.equal((await recoveryDb.checkPaperFileStatus(recPaper.id, recoveryDir)).status, 'ok');
     assert.equal(recoveryDb.listAnnotations(recPaper.id).length, 1);
+
+    // 17. Academic metadata (DOI, arXiv ID, venue, bibtex) persistence, search & ordered getPapersByIds
+    const enrichedPaper = recoveryDb.updatePaperMetadata(recPaper.id, {
+      doi: '10.18653/v1/2024.emnlp-main.12',
+      arxivId: '2405.12345v2',
+      venue: 'EMNLP 2024',
+      bibtex: '@inproceedings{smith2024sparse,\n  title={Sparse Routing}\n}',
+    });
+    assert.equal(enrichedPaper.doi, '10.18653/v1/2024.emnlp-main.12');
+    assert.equal(enrichedPaper.arxivId, '2405.12345v2');
+    assert.equal(enrichedPaper.venue, 'EMNLP 2024');
+    assert.ok(enrichedPaper.bibtex.includes('smith2024sparse'));
+    assert.equal(recoveryDb.listPapers({ view: 'all', search: 'EMNLP' }).length, 1);
+    assert.equal(recoveryDb.listPapers({ view: 'all', search: '2405.12345v2' }).length, 1);
+    assert.equal(recoveryDb.listPapers({ view: 'all', search: '2024.emnlp-main.12' }).length, 1);
+
+    const secondPdfSrc = path.join(tempRoot, 'order-second.pdf');
+    fs.writeFileSync(secondPdfSrc, '%PDF-1.4\n% Order second PDF\n%%EOF\n', 'utf-8');
+    const secondImp = await recoveryDb.importPdfFile(secondPdfSrc, null, recoveryDir);
+    assert.equal(secondImp.status, 'imported');
+    const orderedBatch = recoveryDb.getPapersByIds([secondImp.paper.id, recPaper.id, 'missing-id']);
+    assert.deepEqual(
+      orderedBatch.map((p) => p.id),
+      [secondImp.paper.id, recPaper.id],
+    );
+
     recoveryDb.close();
 
     console.log('ALL_DB_TESTS_PASSED');

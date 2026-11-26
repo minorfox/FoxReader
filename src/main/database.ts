@@ -63,6 +63,10 @@ interface PaperRow {
   authors: string;
   affiliations: string;
   year: number | null;
+  doi?: string;
+  arxiv_id?: string;
+  venue?: string;
+  bibtex?: string;
   folder_id: string | null;
   status: PaperStatus;
   page_count: number;
@@ -279,6 +283,10 @@ export class FoxReaderDatabase {
         authors TEXT NOT NULL DEFAULT '',
         affiliations TEXT NOT NULL DEFAULT '',
         year INTEGER NULL,
+        doi TEXT NOT NULL DEFAULT '',
+        arxiv_id TEXT NOT NULL DEFAULT '',
+        venue TEXT NOT NULL DEFAULT '',
+        bibtex TEXT NOT NULL DEFAULT '',
         folder_id TEXT NULL REFERENCES folders(id) ON DELETE SET NULL,
         status TEXT NOT NULL DEFAULT 'unread' CHECK(status IN ('unread', 'reading', 'read')),
         page_count INTEGER NOT NULL DEFAULT 0,
@@ -351,6 +359,11 @@ export class FoxReaderDatabase {
     if (!paperCols.some((c) => c.name === 'file_type')) {
       this.db.exec(`ALTER TABLE papers ADD COLUMN file_type TEXT NOT NULL DEFAULT 'pdf';`);
     }
+    for (const col of ['doi', 'arxiv_id', 'venue', 'bibtex'] as const) {
+      if (!paperCols.some((c) => c.name === col)) {
+        this.db.exec(`ALTER TABLE papers ADD COLUMN ${col} TEXT NOT NULL DEFAULT '';`);
+      }
+    }
 
     const ftsCols = this.db
       .prepare('PRAGMA table_info(search_fts)')
@@ -411,6 +424,10 @@ export class FoxReaderDatabase {
       authors: row.authors,
       affiliations: row.affiliations ?? '',
       year: row.year,
+      doi: row.doi ?? '',
+      arxivId: row.arxiv_id ?? '',
+      venue: row.venue ?? '',
+      bibtex: row.bibtex ?? '',
       folderId: row.folder_id,
       status: row.status,
       pageCount: row.page_count,
@@ -635,6 +652,19 @@ export class FoxReaderDatabase {
     return row ? this.mapPaper(row) : null;
   }
 
+  public getPapersByIds(paperIds: string[]): Paper[] {
+    const results: Paper[] = [];
+    const seen = new Set<string>();
+    for (const rawId of paperIds) {
+      const id = rawId.trim();
+      if (!id || seen.has(id)) continue;
+      seen.add(id);
+      const paper = this.getPaperById(id);
+      if (paper) results.push(paper);
+    }
+    return results;
+  }
+
   public listPapers(query: PaperListQuery): Paper[] {
     const conditions: string[] = [];
     const params: Array<string | number> = [];
@@ -668,20 +698,36 @@ export class FoxReaderDatabase {
         p.title LIKE ? COLLATE NOCASE
         OR p.authors LIKE ? COLLATE NOCASE
         OR p.affiliations LIKE ? COLLATE NOCASE
+        OR p.doi LIKE ? COLLATE NOCASE
+        OR p.arxiv_id LIKE ? COLLATE NOCASE
+        OR p.venue LIKE ? COLLATE NOCASE
         OR p.file_name LIKE ? COLLATE NOCASE
         OR EXISTS (SELECT 1 FROM paper_tags pt JOIN tags t ON t.id = pt.tag_id WHERE pt.paper_id = p.id AND t.name LIKE ? COLLATE NOCASE)
         OR EXISTS (SELECT 1 FROM annotations a WHERE a.paper_id = p.id AND (a.quote_text LIKE ? COLLATE NOCASE OR a.comment LIKE ? COLLATE NOCASE))
         OR EXISTS (SELECT 1 FROM paper_notes pn WHERE pn.paper_id = p.id AND pn.content_md LIKE ? COLLATE NOCASE)
       )`;
 
+      const likeParams = [
+        likeTerm,
+        likeTerm,
+        likeTerm,
+        likeTerm,
+        likeTerm,
+        likeTerm,
+        likeTerm,
+        likeTerm,
+        likeTerm,
+        likeTerm,
+        likeTerm,
+      ];
       if (ftsExpr) {
         conditions.push(
           `(p.id IN (SELECT paper_id FROM search_fts WHERE search_fts MATCH ?) OR ${likeClause})`,
         );
-        params.push(ftsExpr, likeTerm, likeTerm, likeTerm, likeTerm, likeTerm, likeTerm, likeTerm, likeTerm);
+        params.push(ftsExpr, ...likeParams);
       } else {
         conditions.push(likeClause);
-        params.push(likeTerm, likeTerm, likeTerm, likeTerm, likeTerm, likeTerm, likeTerm, likeTerm);
+        params.push(...likeParams);
       }
     }
 
@@ -806,6 +852,11 @@ export class FoxReaderDatabase {
     const nextAffiliations =
       input.affiliations !== undefined ? input.affiliations.trim() : existing.affiliations;
     const nextYear = input.year !== undefined ? input.year : existing.year;
+    const nextDoi = input.doi !== undefined ? input.doi.trim() : (existing.doi ?? '');
+    const nextArxivId =
+      input.arxivId !== undefined ? input.arxivId.trim() : (existing.arxiv_id ?? '');
+    const nextVenue = input.venue !== undefined ? input.venue.trim() : (existing.venue ?? '');
+    const nextBibtex = input.bibtex !== undefined ? input.bibtex.trim() : (existing.bibtex ?? '');
     const nextStatus = input.status !== undefined ? input.status : existing.status;
     const nextFolderId = input.folderId !== undefined ? input.folderId : existing.folder_id;
     const nextPageCount = input.pageCount !== undefined ? input.pageCount : existing.page_count;
@@ -822,7 +873,7 @@ export class FoxReaderDatabase {
       this.db
         .prepare(
           `UPDATE papers
-           SET title = ?, authors = ?, affiliations = ?, year = ?, status = ?, folder_id = ?, page_count = ?, updated_at = ?
+           SET title = ?, authors = ?, affiliations = ?, year = ?, doi = ?, arxiv_id = ?, venue = ?, bibtex = ?, status = ?, folder_id = ?, page_count = ?, updated_at = ?
            WHERE id = ?`,
         )
         .run(
@@ -830,6 +881,10 @@ export class FoxReaderDatabase {
           nextAuthors,
           nextAffiliations,
           nextYear,
+          nextDoi,
+          nextArxivId,
+          nextVenue,
+          nextBibtex,
           nextStatus,
           nextFolderId,
           nextPageCount,

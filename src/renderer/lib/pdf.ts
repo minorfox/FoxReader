@@ -40,6 +40,7 @@ export interface ExtractedPdfInfo {
   affiliations?: string;
   year?: number | null;
   doi?: string;
+  arxivId?: string;
 }
 
 export async function extractPdfMetadata(sha256: string): Promise<ExtractedPdfInfo | null> {

@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- PDF built-in Outline (TOC) drawer with search filtering and lazy page resolution + caching in `PdfReader`.
+- Academic metadata enrichment across arXiv API, OpenAlex, and Crossref (persisting `doi`, `arxivId`, `venue`, and official/synthesized `bibtex`), plus 1-click BibTeX copy on paper cards/right sidebar/metadata modal and batch `.bib` export with automatic citation key deduplication.
+- Clickable `[P.12]` / `[第12页]` / `[label](#page=12)` page-jump links in Paper Notes preview and a 1-click `+ P.{page}` insert button while editing.
+
 ### Improved
 
 - Added atomic temporary-file copy during document import to prevent cloud sync clients from picking up half-written files, automatic managed-file repair when re-importing a duplicate paper whose local file is missing/empty, main-process file health diagnostics (`missing`, `.icloud` placeholder, `0`-byte), and 1-click SHA-256-verified original file relinking with retry/open-directory actions in the PDF and Markdown readers.

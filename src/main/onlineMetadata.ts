@@ -1,36 +1,44 @@
 import { net } from 'electron';
 import {
+  buildBibtexFromPaper,
+  cleanArxivId,
+  cleanDoi,
+} from '../shared/bibtex.js';
+import {
   normalizeTextForTranslation,
   type EnrichPaperOnlineInput,
   type EnrichPaperOnlineResult,
   type TranslateTextResult,
   type UpdateCheckResult,
 } from '../shared/types.js';
+import {
+  computeTitleSimilarity,
+  extractCrossrefWorkMetadata,
+  extractOpenAlexWorkMetadata,
+  parseArxivAtomXml,
+  type OpenAlexWork,
+  type ParsedAcademicWork,
+} from './metadataCore.js';
 import { detectInstallMode } from './updater.js';
 import { selectReleaseAsset, type ReleaseAsset } from './updaterCore.js';
+
+export { computeTitleSimilarity };
 
 const RELEASES_FALLBACK_URL = 'https://github.com/minorfox/FoxReader/releases';
 const GITHUB_LATEST_API = 'https://api.github.com/repos/minorfox/FoxReader/releases/latest';
 const OPENALEX_API_BASE = 'https://api.openalex.org/works';
+const ARXIV_API_BASE = 'https://export.arxiv.org/api/query';
+const CROSSREF_API_BASE = 'https://api.crossref.org/works';
 const YOUDAO_TRANSLATE_URL = 'https://aidemo.youdao.com/trans';
 const MYMEMORY_TRANSLATE_URL = 'https://api.mymemory.translated.net/get';
 const REQUEST_TIMEOUT_MS = 10_000;
 
-interface OpenAlexAuthorship {
-  author?: { display_name?: string | null } | null;
-  institutions?: Array<{ display_name?: string | null } | null> | null;
-  raw_affiliation_strings?: Array<string | null> | null;
-}
-
-interface OpenAlexWork {
-  title?: string | null;
-  display_name?: string | null;
-  publication_year?: number | null;
-  authorships?: OpenAlexAuthorship[] | null;
-}
-
 interface OpenAlexSearchResponse {
   results?: OpenAlexWork[] | null;
+}
+
+interface CrossrefWorkResponse {
+  message?: Record<string, unknown>;
 }
 
 interface GithubReleaseResponse {
@@ -38,96 +46,6 @@ interface GithubReleaseResponse {
   html_url?: string;
   body?: string;
   assets?: ReleaseAsset[];
-}
-
-function tokenizeTitle(raw: string): string[] {
-  const normalized = raw
-    .normalize('NFKC')
-    .toLowerCase()
-    .replace(/[-‐‑–—:/\\()[\]{}.,;!?'"`~@#$%^&*+=|<>]/g, ' ');
-  const tokens: string[] = [];
-  const latinMatches = normalized.match(/[a-z0-9]+/g);
-  if (latinMatches) {
-    tokens.push(...latinMatches);
-  }
-  const cjkMatches = normalized.match(/[\u4e00-\u9fff]/g);
-  if (cjkMatches) {
-    tokens.push(...cjkMatches);
-  }
-  return tokens;
-}
-
-/**
- * Computes Dice token similarity in [0, 1] across both Latin words and CJK characters.
- */
-export function computeTitleSimilarity(a: string, b: string): number {
-  const tokensA = new Set(tokenizeTitle(a));
-  const tokensB = new Set(tokenizeTitle(b));
-  if (tokensA.size === 0 || tokensB.size === 0) return 0;
-
-  let overlap = 0;
-  for (const token of tokensA) {
-    if (tokensB.has(token)) overlap += 1;
-  }
-  return (2 * overlap) / (tokensA.size + tokensB.size);
-}
-
-function cleanDoi(raw?: string): string | null {
-  if (!raw) return null;
-  const trimmed = raw
-    .trim()
-    .replace(/^https?:\/\/(?:dx\.)?doi\.org\//i, '')
-    .replace(/^doi:\s*/i, '')
-    .replace(/[.,;)\]]+$/, '');
-  return /^10\.\d{4,9}\/[-._;()/:A-Za-z0-9]+$/.test(trimmed) ? trimmed : null;
-}
-
-function extractWorkMetadata(work: OpenAlexWork): {
-  title?: string;
-  authors?: string;
-  affiliations?: string;
-  year: number | null;
-} {
-  const title = (work.title || work.display_name || '').trim() || undefined;
-  const authorships = work.authorships ?? [];
-
-  const authorSet = new Set<string>();
-  const affiliationSet = new Set<string>();
-
-  for (const item of authorships) {
-    const authorName = item.author?.display_name?.trim();
-    if (authorName) {
-      authorSet.add(authorName);
-    }
-
-    const institutions = item.institutions ?? [];
-    let foundStructuredInstitution = false;
-    for (const inst of institutions) {
-      const name = inst?.display_name?.trim();
-      if (name) {
-        affiliationSet.add(name);
-        foundStructuredInstitution = true;
-      }
-    }
-
-    if (!foundStructuredInstitution && item.raw_affiliation_strings) {
-      for (const rawAff of item.raw_affiliation_strings) {
-        const clean = rawAff?.trim();
-        if (clean) {
-          affiliationSet.add(clean);
-        }
-      }
-    }
-  }
-
-  const authors = authorSet.size > 0 ? Array.from(authorSet).join(', ') : undefined;
-  const affiliations = affiliationSet.size > 0 ? Array.from(affiliationSet).join('; ') : undefined;
-  const year =
-    typeof work.publication_year === 'number' && Number.isFinite(work.publication_year)
-      ? work.publication_year
-      : null;
-
-  return { title, authors, affiliations, year };
 }
 
 async function fetchJsonWithTimeout<T>(url: string, headers: Record<string, string>): Promise<{ status: number; data: T | null }> {
@@ -149,66 +67,219 @@ async function fetchJsonWithTimeout<T>(url: string, headers: Record<string, stri
   }
 }
 
+async function fetchTextWithTimeout(
+  url: string,
+  headers: Record<string, string>,
+  timeoutMs = REQUEST_TIMEOUT_MS,
+): Promise<{ status: number; text: string | null }> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await net.fetch(url, {
+      method: 'GET',
+      headers,
+      signal: controller.signal,
+    });
+    if (!response.ok) {
+      return { status: response.status, text: null };
+    }
+    return { status: response.status, text: await response.text() };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function fetchCrossrefBibtex(doi: string, userAgent: string): Promise<string | undefined> {
+  try {
+    const bibUrl = `${CROSSREF_API_BASE}/${encodeURIComponent(doi)}/transform/application/x-bibtex`;
+    const { text } = await fetchTextWithTimeout(
+      bibUrl,
+      {
+        'User-Agent': userAgent,
+        Accept: 'application/x-bibtex',
+      },
+      6_000,
+    );
+    const trimmed = text?.trim();
+    if (trimmed && trimmed.startsWith('@') && trimmed.includes('{')) {
+      return trimmed;
+    }
+  } catch {
+    // Fallback cleanly to local BibTeX synthesis
+  }
+  return undefined;
+}
+
+async function lookupWorkByDoi(
+  doi: string,
+  headers: Record<string, string>,
+): Promise<{ work: ParsedAcademicWork; source: string } | null> {
+  try {
+    const doiUrl = `${OPENALEX_API_BASE}/https://doi.org/${encodeURIComponent(doi)}`;
+    const { data } = await fetchJsonWithTimeout<OpenAlexWork>(doiUrl, headers);
+    if (data && (data.title || data.display_name)) {
+      return { work: extractOpenAlexWorkMetadata(data), source: 'OpenAlex (DOI)' };
+    }
+  } catch {
+    // Fall through to Crossref
+  }
+
+  try {
+    const crUrl = `${CROSSREF_API_BASE}/${encodeURIComponent(doi)}`;
+    const { data } = await fetchJsonWithTimeout<CrossrefWorkResponse>(crUrl, headers);
+    if (data?.message) {
+      const parsed = extractCrossrefWorkMetadata(data.message);
+      if (parsed.title) {
+        return { work: parsed, source: 'Crossref (DOI)' };
+      }
+    }
+  } catch {
+    // Ignore Crossref error
+  }
+
+  return null;
+}
+
+function mergeParsedWorks(primary: ParsedAcademicWork, secondary?: ParsedAcademicWork | null): ParsedAcademicWork {
+  if (!secondary) return primary;
+  return {
+    title: primary.title || secondary.title,
+    authors: primary.authors || secondary.authors,
+    affiliations: primary.affiliations || secondary.affiliations,
+    year: primary.year ?? secondary.year,
+    doi: primary.doi || secondary.doi,
+    arxivId: primary.arxivId || secondary.arxivId,
+    venue: primary.venue || secondary.venue,
+    bibtex: primary.bibtex || secondary.bibtex,
+    volume: primary.volume || secondary.volume,
+    issue: primary.issue || secondary.issue,
+    pages: primary.pages || secondary.pages,
+    rawType: primary.rawType || secondary.rawType,
+    primaryClass: primary.primaryClass || secondary.primaryClass,
+  };
+}
+
 /**
- * Looks up paper metadata on OpenAlex using DOI (exact) or title search (similarity >= 0.72).
+ * Enriches paper metadata from arXiv, OpenAlex, and Crossref using arXiv ID, DOI, or title similarity (>= 0.72).
  */
 export async function fetchOpenAlexMetadata(
   input: EnrichPaperOnlineInput,
 ): Promise<EnrichPaperOnlineResult> {
+  const userAgent = 'FoxReader/0.2 (mailto:lihuang@swufe.edu.cn)';
   const headers = {
-    'User-Agent': 'FoxReader/0.2 (mailto:lihuang@swufe.edu.cn)',
+    'User-Agent': userAgent,
     Accept: 'application/json',
   };
 
   try {
-    const doi = cleanDoi(input.doiHint);
-    if (doi) {
-      const doiUrl = `${OPENALEX_API_BASE}/https://doi.org/${encodeURIComponent(doi)}`;
-      const { data } = await fetchJsonWithTimeout<OpenAlexWork>(doiUrl, headers);
-      if (data && (data.title || data.display_name)) {
+    const doi = cleanDoi(input.doiHint) ?? cleanDoi(input.titleHint);
+    const arxivId = cleanArxivId(input.arxivIdHint) ?? cleanArxivId(input.titleHint);
+
+    let matchedWork: ParsedAcademicWork | null = null;
+    let sourceLabel = 'OpenAlex';
+
+    // 1. arXiv API lookup (with optional DOI cross-enrichment for published venue & affiliations)
+    if (arxivId) {
+      try {
+        const arxivUrl = `${ARXIV_API_BASE}?id_list=${encodeURIComponent(arxivId)}`;
+        const { text } = await fetchTextWithTimeout(arxivUrl, { 'User-Agent': userAgent });
+        if (text) {
+          const arxivWork = parseArxivAtomXml(text);
+          if (arxivWork) {
+            matchedWork = arxivWork;
+            sourceLabel = 'arXiv';
+            const publishedDoi = doi ?? arxivWork.doi;
+            if (publishedDoi) {
+              const doiRes = await lookupWorkByDoi(publishedDoi, headers);
+              if (doiRes) {
+                matchedWork = mergeParsedWorks(doiRes.work, arxivWork);
+                matchedWork.arxivId = arxivWork.arxivId ?? arxivId;
+                sourceLabel = `arXiv + ${doiRes.source}`;
+              }
+            }
+          }
+        }
+      } catch {
+        // Fall through to DOI / OpenAlex title search
+      }
+    }
+
+    // 2. Direct DOI lookup (OpenAlex -> Crossref fallback)
+    if (!matchedWork && doi) {
+      const doiRes = await lookupWorkByDoi(doi, headers);
+      if (doiRes) {
+        matchedWork = doiRes.work;
+        sourceLabel = doiRes.source;
+      }
+    }
+
+    // 3. Title search via OpenAlex
+    if (!matchedWork) {
+      const titleHint = input.titleHint.trim();
+      if (!titleHint) {
+        return { matched: false, error: '缺少可用于联网检索的标题、DOI 或 arXiv ID。' };
+      }
+
+      const searchUrl = `${OPENALEX_API_BASE}?search=${encodeURIComponent(titleHint)}&per-page=5`;
+      const { status, data } = await fetchJsonWithTimeout<OpenAlexSearchResponse>(searchUrl, headers);
+      if (!data) {
+        return { matched: false, error: `OpenAlex 请求失败 (HTTP ${status})` };
+      }
+
+      let bestWork: OpenAlexWork | null = null;
+      let bestScore = 0;
+
+      for (const candidate of data.results ?? []) {
+        const candidateTitle = candidate.title || candidate.display_name || '';
+        if (!candidateTitle) continue;
+        const score = computeTitleSimilarity(titleHint, candidateTitle);
+        if (score > bestScore) {
+          bestScore = score;
+          bestWork = candidate;
+        }
+      }
+
+      if (!bestWork || bestScore < 0.72) {
         return {
-          matched: true,
-          ...extractWorkMetadata(data),
-          source: 'OpenAlex (DOI)',
+          matched: false,
+          error: '未在 OpenAlex / arXiv 找到高置信度匹配文献，请检查标题、DOI 或 arXiv ID 后重试。',
         };
       }
+
+      matchedWork = extractOpenAlexWorkMetadata(bestWork);
+      sourceLabel = 'OpenAlex';
     }
 
-    const titleHint = input.titleHint.trim();
-    if (!titleHint) {
-      return { matched: false, error: '缺少可用于联网检索的标题或 DOI。' };
-    }
-
-    const searchUrl = `${OPENALEX_API_BASE}?search=${encodeURIComponent(titleHint)}&per-page=5`;
-    const { status, data } = await fetchJsonWithTimeout<OpenAlexSearchResponse>(searchUrl, headers);
-    if (!data) {
-      return { matched: false, error: `OpenAlex 请求失败 (HTTP ${status})` };
-    }
-
-    let bestWork: OpenAlexWork | null = null;
-    let bestScore = 0;
-
-    for (const candidate of data.results ?? []) {
-      const candidateTitle = candidate.title || candidate.display_name || '';
-      if (!candidateTitle) continue;
-      const score = computeTitleSimilarity(titleHint, candidateTitle);
-      if (score > bestScore) {
-        bestScore = score;
-        bestWork = candidate;
-      }
-    }
-
-    if (!bestWork || bestScore < 0.72) {
-      return {
-        matched: false,
-        error: 'OpenAlex 未找到高置信度匹配文献，请检查标题后重试。',
-      };
-    }
+    const resolvedDoi = matchedWork.doi ?? doi ?? undefined;
+    const resolvedArxivId = matchedWork.arxivId ?? arxivId ?? undefined;
+    const officialBibtex = resolvedDoi ? await fetchCrossrefBibtex(resolvedDoi, userAgent) : undefined;
+    const bibtex =
+      officialBibtex ??
+      buildBibtexFromPaper({
+        title: matchedWork.title || input.titleHint || 'Untitled',
+        authors: matchedWork.authors,
+        year: matchedWork.year,
+        venue: matchedWork.venue,
+        doi: resolvedDoi,
+        arxivId: resolvedArxivId,
+        volume: matchedWork.volume,
+        issue: matchedWork.issue,
+        pages: matchedWork.pages,
+        rawType: matchedWork.rawType,
+        primaryClass: matchedWork.primaryClass,
+      });
 
     return {
       matched: true,
-      ...extractWorkMetadata(bestWork),
-      source: 'OpenAlex',
+      title: matchedWork.title,
+      authors: matchedWork.authors,
+      affiliations: matchedWork.affiliations,
+      year: matchedWork.year,
+      doi: resolvedDoi,
+      arxivId: resolvedArxivId,
+      venue: matchedWork.venue,
+      bibtex,
+      source: sourceLabel,
     };
   } catch (error) {
     return {

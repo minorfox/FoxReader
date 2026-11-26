@@ -4,6 +4,7 @@ import { dirname } from 'node:path';
 import { Readable } from 'node:stream';
 import { fileURLToPath } from 'node:url';
 import { app, BrowserWindow, dialog, ipcMain, protocol, shell } from 'electron';
+import { exportBibtexCollection } from '../shared/bibtex.js';
 import { DataDirLock } from './dataLock.js';
 import { FoxReaderDatabase } from './database.js';
 import { checkLatestGithubRelease, fetchOpenAlexMetadata, translateSelectionText } from './onlineMetadata.js';
@@ -486,6 +487,34 @@ function registerIpcHandlers(): void {
   ipcMain.handle('papers:enrichOnline', (_event, input: EnrichPaperOnlineInput) =>
     fetchOpenAlexMetadata(input),
   );
+
+  ipcMain.handle('papers:exportBibtex', async (_event, paperIds: string[], defaultFileName?: string) => {
+    const papers = database.getPapersByIds(Array.isArray(paperIds) ? paperIds : []);
+    if (papers.length === 0) {
+      return { ok: false, error: '没有可导出的论文。' };
+    }
+    const content = exportBibtexCollection(papers);
+    const dialogOpts = {
+      title: '导出 BibTeX 引用文件',
+      defaultPath: defaultFileName || 'foxreader-references.bib',
+      filters: [{ name: 'BibTeX 文件', extensions: ['bib'] }],
+    };
+    const result = mainWindow
+      ? await dialog.showSaveDialog(mainWindow, dialogOpts)
+      : await dialog.showSaveDialog(dialogOpts);
+    if (result.canceled || !result.filePath) {
+      return { ok: false, canceled: true };
+    }
+    try {
+      await fs.promises.writeFile(result.filePath, content, 'utf-8');
+      return { ok: true, filePath: result.filePath, count: papers.length };
+    } catch (error) {
+      return {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  });
 
   ipcMain.handle('translate:text', (_event, text: string) => translateSelectionText(text));
 

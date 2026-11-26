@@ -48,6 +48,8 @@ const api: FoxReaderApi = {
   readMarkdownContent: (sha256: string) => ipcRenderer.invoke('papers:readMarkdown', sha256),
   checkPaperFileStatus: (paperId: string) => ipcRenderer.invoke('papers:checkFileStatus', paperId),
   relinkPaperFile: (paperId: string) => ipcRenderer.invoke('papers:relinkFile', paperId),
+  exportBibtex: (paperIds: string[], defaultFileName?: string) =>
+    ipcRenderer.invoke('papers:exportBibtex', paperIds, defaultFileName),
   movePaperToFolder: (paperId: string, folderId: string | null) =>
     ipcRenderer.invoke('papers:moveToFolder', paperId, folderId),
   updatePaperProgress: (paperId: string, lastPage: number, lastZoom: number) =>

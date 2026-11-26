@@ -15,6 +15,7 @@ import type {
   UpdateAnnotationInput,
   UpdatePaperMetadataInput,
 } from '../shared/types';
+import { buildBibtexFromPaper } from '../shared/bibtex';
 import { extractPdfMetadata } from './lib/pdf';
 import { LeftSidebar } from './components/LeftSidebar';
 import { MarkdownReader } from './components/MarkdownReader';
@@ -90,6 +91,8 @@ export function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [windowFileDragOver, setWindowFileDragOver] = useState(false);
   const [readerReloadNonce, setReaderReloadNonce] = useState(0);
+  const [currentPdfPage, setCurrentPdfPage] = useState(1);
+  const [pageJumpRequest, setPageJumpRequest] = useState<{ pageNumber: number; nonce: number } | null>(null);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
 
   const pushToast = useCallback((kind: ToastMessage['kind'], text: string) => {
@@ -216,6 +219,8 @@ export function App() {
             ...(meta.authors ? { authors: meta.authors } : {}),
             ...(meta.affiliations ? { affiliations: meta.affiliations } : {}),
             ...(meta.year ? { year: meta.year } : {}),
+            ...(meta.doi ? { doi: meta.doi } : {}),
+            ...(meta.arxivId ? { arxivId: meta.arxivId } : {}),
           });
           await refreshPapers();
         }
@@ -422,6 +427,8 @@ export function App() {
           ...(meta.authors ? { authors: meta.authors } : {}),
           ...(meta.affiliations ? { affiliations: meta.affiliations } : {}),
           ...(meta.year ? { year: meta.year } : {}),
+          ...(meta.doi ? { doi: meta.doi } : {}),
+          ...(meta.arxivId ? { arxivId: meta.arxivId } : {}),
         });
         await refreshPapers();
         pushToast('success', '已重新识别论文标题、作者与机构');
@@ -436,10 +443,11 @@ export function App() {
     async (paper: Paper) => {
       setEnrichingOnline(true);
       try {
-        const localMeta = await extractPdfMetadata(paper.sha256);
+        const localMeta = paper.fileType === 'pdf' ? await extractPdfMetadata(paper.sha256) : null;
         const res = await window.foxreader.enrichPaperOnline({
           titleHint: localMeta?.title || paper.title,
-          doiHint: localMeta?.doi,
+          doiHint: paper.doi || localMeta?.doi,
+          arxivIdHint: paper.arxivId || localMeta?.arxivId,
         });
         if (!res.matched) {
           pushToast('warning', res.error || '未能联网匹配到该论文信息');
@@ -450,9 +458,13 @@ export function App() {
           ...(res.authors ? { authors: res.authors } : {}),
           ...(res.affiliations ? { affiliations: res.affiliations } : {}),
           ...(res.year !== undefined ? { year: res.year } : {}),
+          ...(res.doi ? { doi: res.doi } : {}),
+          ...(res.arxivId ? { arxivId: res.arxivId } : {}),
+          ...(res.venue ? { venue: res.venue } : {}),
+          ...(res.bibtex ? { bibtex: res.bibtex } : {}),
         });
         await refreshPapers();
-        pushToast('success', `已通过 ${res.source || 'OpenAlex'} 补全作者与机构信息`);
+        pushToast('success', `已通过 ${res.source || 'OpenAlex'} 补全学术元数据与 BibTeX`);
       } catch (error) {
         pushToast('error', `联网补全失败：${error instanceof Error ? error.message : String(error)}`);
       } finally {
@@ -461,6 +473,36 @@ export function App() {
     },
     [pushToast, refreshPapers],
   );
+
+  const handleCopyPaperBibtex = useCallback(
+    (paper: Paper) => {
+      const bib = buildBibtexFromPaper(paper);
+      void navigator.clipboard.writeText(bib).then(
+        () => pushToast('success', '已复制 BibTeX 引用到剪贴板'),
+        () => pushToast('error', '复制 BibTeX 失败'),
+      );
+    },
+    [pushToast],
+  );
+
+  const handleExportBatchBibtex = useCallback(
+    async (targets: Paper[], onDone: () => void) => {
+      if (targets.length === 0) return;
+      const res = await window.foxreader.exportBibtex(targets.map((p) => p.id));
+      if (res.canceled) return;
+      if (res.ok) {
+        onDone();
+        pushToast('success', `已导出 ${res.count ?? targets.length} 篇文献的 BibTeX 文件`);
+      } else {
+        pushToast('error', res.error || '导出 BibTeX 失败');
+      }
+    },
+    [pushToast],
+  );
+
+  const handleJumpToPage = useCallback((pageNumber: number) => {
+    setPageJumpRequest({ pageNumber, nonce: Date.now() });
+  }, []);
 
   const handleConfirmDeletePaper = async () => {
     if (!confirmDeletePaper) return;
@@ -698,7 +740,9 @@ export function App() {
           onRequestDeleteFolder={setConfirmDeleteFolder}
           onMovePaperToFolder={handleMovePaperToFolder}
           onEditPaper={setEditingPaper}
+          onCopyPaperBibtex={handleCopyPaperBibtex}
           onRequestDeletePaper={setConfirmDeletePaper}
+          onExportBatchBibtex={(items, onDone) => void handleExportBatchBibtex(items, onDone)}
           onRequestBatchDeletePapers={(items, onDone) =>
             setConfirmBatchDelete({ papers: items, onDone })
           }
@@ -727,12 +771,14 @@ export function App() {
           activeColor={activeColor}
           selectedAnnotationId={selectedAnnotationId}
           jumpRequest={jumpRequest}
+          pageJumpRequest={pageJumpRequest}
           leftCollapsed={leftCollapsed}
           rightCollapsed={rightCollapsed}
           onToggleLeft={() => setLeftCollapsed((p) => !p)}
           onToggleRight={() => setRightCollapsed((p) => !p)}
           onSaveProgress={handleSaveProgress}
           onSyncPageCount={handleSyncPageCount}
+          onCurrentPageChange={setCurrentPdfPage}
           onPickAndImport={() => void handlePickAndImport(activeView === 'folder' ? activeFolderId : null)}
           onCreateTextAnnotation={handleCreateTextAnnotation}
           onCreateAreaAnnotation={handleCreateAreaAnnotation}
@@ -757,12 +803,15 @@ export function App() {
           cardRevealRequest={cardRevealRequest}
           reextractingMeta={reextractingMeta}
           enrichingOnline={enrichingOnline}
+          currentPdfPage={currentPdfPage}
           onChangeTab={setRightTab}
           onJumpToAnnotation={handleJumpToAnnotation}
+          onJumpToPage={handleJumpToPage}
           onUpdateAnnotation={handleUpdateAnnotation}
           onDeleteAnnotation={handleDeleteAnnotation}
           onSaveNote={handleSaveNote}
           onCopyText={handleCopyText}
+          onCopyBibtex={handleCopyPaperBibtex}
           onSearchTerm={handleSearchByTerm}
           onEditPaperMetadata={setEditingPaper}
           onReextractMetadata={handleReextractMetadata}
@@ -784,6 +833,13 @@ export function App() {
         availableTags={overview.tags}
         onClose={() => setEditingPaper(null)}
         onSave={handleSaveMetadata}
+        onEnrichOnlineWithHints={(input) => window.foxreader.enrichPaperOnline(input)}
+        onCopyText={(text) =>
+          void navigator.clipboard.writeText(text).then(
+            () => pushToast('success', '已复制到剪贴板'),
+            () => pushToast('error', '复制失败'),
+          )
+        }
       />
 
       <ConfirmModal

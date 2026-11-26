@@ -14,10 +14,14 @@ import {
   Copy,
   Check,
   Download,
+  Sparkles,
+  Quote,
 } from 'lucide-react';
 import type {
   DataDirLockInfo,
   DownloadUpdateInput,
+  EnrichPaperOnlineInput,
+  EnrichPaperOnlineResult,
   Folder,
   Paper,
   PaperStatus,
@@ -27,6 +31,7 @@ import type {
   UpdateInstallMode,
   UpdatePaperMetadataInput,
 } from '../../shared/types';
+import { buildBibtexFromPaper } from '../../shared/bibtex';
 
 export interface ToastMessage {
   id: string;
@@ -144,22 +149,32 @@ export function MetadataModal({
   availableTags,
   onClose,
   onSave,
+  onEnrichOnlineWithHints,
+  onCopyText,
 }: {
   paper: Paper | null;
   folders: Folder[];
   availableTags: Tag[];
   onClose: () => void;
   onSave: (paperId: string, input: UpdatePaperMetadataInput, tagNames: string[]) => Promise<void>;
+  onEnrichOnlineWithHints?: (input: EnrichPaperOnlineInput) => Promise<EnrichPaperOnlineResult>;
+  onCopyText?: (text: string) => void;
 }) {
   const [title, setTitle] = useState('');
   const [authors, setAuthors] = useState('');
   const [affiliations, setAffiliations] = useState('');
   const [year, setYear] = useState('');
+  const [venue, setVenue] = useState('');
+  const [doi, setDoi] = useState('');
+  const [arxivId, setArxivId] = useState('');
+  const [bibtex, setBibtex] = useState('');
   const [status, setStatus] = useState<PaperStatus>('unread');
   const [folderId, setFolderId] = useState<string>('');
   const [tagNames, setTagNames] = useState<string[]>([]);
   const [tagInput, setTagInput] = useState('');
   const [saving, setSaving] = useState(false);
+  const [fetchingOnline, setFetchingOnline] = useState(false);
+  const [enrichHintMsg, setEnrichHintMsg] = useState<string | null>(null);
 
   useEffect(() => {
     if (!paper) return;
@@ -167,13 +182,83 @@ export function MetadataModal({
     setAuthors(paper.authors);
     setAffiliations(paper.affiliations ?? '');
     setYear(paper.year !== null ? String(paper.year) : '');
+    setVenue(paper.venue ?? '');
+    setDoi(paper.doi ?? '');
+    setArxivId(paper.arxivId ?? '');
+    setBibtex(paper.bibtex ?? '');
     setStatus(paper.status);
     setFolderId(paper.folderId ?? '');
     setTagNames(paper.tags.map((t) => t.name));
     setTagInput('');
+    setEnrichHintMsg(null);
   }, [paper]);
 
   if (!paper) return null;
+
+  const parseFormYear = (): number | null => {
+    const parsedYear = year.trim() === '' ? null : Number.parseInt(year.trim(), 10);
+    return parsedYear !== null && Number.isFinite(parsedYear) ? parsedYear : null;
+  };
+
+  const handleEnrichInModal = async () => {
+    if (!onEnrichOnlineWithHints) return;
+    setFetchingOnline(true);
+    setEnrichHintMsg(null);
+    try {
+      const res = await onEnrichOnlineWithHints({
+        titleHint: title.trim() || paper.title,
+        doiHint: doi.trim() || undefined,
+        arxivIdHint: arxivId.trim() || undefined,
+      });
+      if (!res.matched) {
+        setEnrichHintMsg(res.error || '未能联网匹配到文献，请检查标题、DOI 或 arXiv ID。');
+        return;
+      }
+      if (res.title) setTitle(res.title);
+      if (res.authors) setAuthors(res.authors);
+      if (res.affiliations) setAffiliations(res.affiliations);
+      if (res.year !== undefined && res.year !== null) setYear(String(res.year));
+      if (res.venue) setVenue(res.venue);
+      if (res.doi) setDoi(res.doi);
+      if (res.arxivId) setArxivId(res.arxivId);
+      if (res.bibtex) setBibtex(res.bibtex);
+      setEnrichHintMsg(`已从 ${res.source || 'OpenAlex'} 填入元数据与 BibTeX（记得点击下方保存）`);
+    } catch (err) {
+      setEnrichHintMsg(err instanceof Error ? err.message : String(err));
+    } finally {
+      setFetchingOnline(false);
+    }
+  };
+
+  const handleRegenerateBibtex = () => {
+    const generated = buildBibtexFromPaper({
+      title: title.trim() || paper.title,
+      authors: authors.trim(),
+      year: parseFormYear(),
+      venue: venue.trim(),
+      doi: doi.trim(),
+      arxivId: arxivId.trim(),
+    });
+    setBibtex(generated);
+  };
+
+  const handleCopyModalBibtex = () => {
+    const content =
+      bibtex.trim() ||
+      buildBibtexFromPaper({
+        title: title.trim() || paper.title,
+        authors: authors.trim(),
+        year: parseFormYear(),
+        venue: venue.trim(),
+        doi: doi.trim(),
+        arxivId: arxivId.trim(),
+      });
+    if (onCopyText) {
+      onCopyText(content);
+    } else {
+      void navigator.clipboard.writeText(content);
+    }
+  };
 
   const addTagName = (raw: string) => {
     const clean = raw.trim();
@@ -193,14 +278,17 @@ export function MetadataModal({
         pendingTag && !tagNames.some((t) => t.toLowerCase() === pendingTag.toLowerCase())
           ? [...tagNames, pendingTag]
           : tagNames;
-      const parsedYear = year.trim() === '' ? null : Number.parseInt(year.trim(), 10);
       await onSave(
         paper.id,
         {
           title: title.trim() || paper.title,
           authors: authors.trim(),
           affiliations: affiliations.trim(),
-          year: parsedYear !== null && Number.isFinite(parsedYear) ? parsedYear : null,
+          year: parseFormYear(),
+          venue: venue.trim(),
+          doi: doi.trim(),
+          arxivId: arxivId.trim(),
+          bibtex: bibtex.trim(),
           status,
           folderId: folderId === '' ? null : folderId,
         },
@@ -216,10 +304,10 @@ export function MetadataModal({
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-[1px] p-4">
       <form
         onSubmit={handleSubmit}
-        className="w-full max-w-lg rounded-xl bg-white border border-slate-200 shadow-xl overflow-hidden"
+        className="w-full max-w-xl max-h-[88vh] flex flex-col rounded-xl bg-white border border-slate-200 shadow-xl overflow-hidden"
       >
-        <div className="flex items-center justify-between px-5 py-3.5 border-b border-slate-100">
-          <h3 className="font-semibold text-slate-900 text-sm">编辑论文元数据</h3>
+        <div className="flex items-center justify-between px-5 py-3.5 border-b border-slate-100 shrink-0">
+          <h3 className="font-semibold text-slate-900 text-sm">编辑论文元数据与引用</h3>
           <button
             type="button"
             onClick={onClose}
@@ -229,7 +317,7 @@ export function MetadataModal({
           </button>
         </div>
 
-        <div className="p-5 space-y-4 text-sm">
+        <div className="p-5 space-y-4 text-sm overflow-y-auto">
           <div>
             <label className="block text-xs font-medium text-slate-600 mb-1">论文标题</label>
             <input
@@ -275,6 +363,62 @@ export function MetadataModal({
               onChange={(e) => setAffiliations(e.target.value)}
               className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500/30 focus:border-violet-500"
             />
+          </div>
+
+          <div>
+            <label className="block text-xs font-medium text-slate-600 mb-1">期刊 / 会议（Venue）</label>
+            <input
+              type="text"
+              placeholder="例如：NeurIPS / IEEE Transactions on Pattern Analysis..."
+              value={venue}
+              onChange={(e) => setVenue(e.target.value)}
+              className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500/30 focus:border-violet-500"
+            />
+          </div>
+
+          <div className="space-y-2">
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-medium text-slate-600 mb-1">DOI</label>
+                <input
+                  type="text"
+                  placeholder="例如：10.18653/v1/2024.emnlp-main.12"
+                  value={doi}
+                  onChange={(e) => setDoi(e.target.value)}
+                  className="w-full rounded-lg border border-slate-200 px-3 py-2 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-violet-500/30 focus:border-violet-500"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-slate-600 mb-1">arXiv ID</label>
+                <input
+                  type="text"
+                  placeholder="例如：2405.12345"
+                  value={arxivId}
+                  onChange={(e) => setArxivId(e.target.value)}
+                  className="w-full rounded-lg border border-slate-200 px-3 py-2 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-violet-500/30 focus:border-violet-500"
+                />
+              </div>
+            </div>
+            {onEnrichOnlineWithHints && (
+              <div className="flex items-center justify-between gap-2">
+                <button
+                  type="button"
+                  disabled={fetchingOnline}
+                  onClick={() => void handleEnrichInModal()}
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-violet-200 bg-violet-50 hover:bg-violet-100 text-xs font-medium text-violet-700 disabled:opacity-50 transition"
+                >
+                  {fetchingOnline ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <Sparkles className="w-3.5 h-3.5" />
+                  )}
+                  {fetchingOnline ? '查询中...' : '按 DOI / arXiv / 标题联网补全'}
+                </button>
+                {enrichHintMsg && (
+                  <span className="text-[11px] text-slate-500 truncate">{enrichHintMsg}</span>
+                )}
+              </div>
+            )}
           </div>
 
           <div className="grid grid-cols-2 gap-3">
@@ -368,13 +512,44 @@ export function MetadataModal({
             )}
           </div>
 
+          <div className="space-y-1.5">
+            <div className="flex items-center justify-between">
+              <label className="block text-xs font-medium text-slate-600">BibTeX 引用条目</label>
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={handleRegenerateBibtex}
+                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded border border-slate-200 bg-white hover:bg-slate-50 text-[11px] text-slate-600 transition"
+                >
+                  <RefreshCw className="w-3 h-3" />
+                  按当前字段生成
+                </button>
+                <button
+                  type="button"
+                  onClick={handleCopyModalBibtex}
+                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded border border-slate-200 bg-white hover:bg-slate-50 text-[11px] text-slate-600 transition"
+                >
+                  <Quote className="w-3 h-3" />
+                  复制
+                </button>
+              </div>
+            </div>
+            <textarea
+              rows={5}
+              value={bibtex}
+              onChange={(e) => setBibtex(e.target.value)}
+              placeholder="@article{...}（留空将在复制或批量导出时自动按当前元数据生成）"
+              className="w-full rounded-lg border border-slate-200 bg-slate-50/50 px-3 py-2 text-[11px] font-mono text-slate-700 leading-relaxed focus:bg-white focus:outline-none focus:ring-2 focus:ring-violet-500/30 focus:border-violet-500"
+            />
+          </div>
+
           <div className="rounded-lg bg-slate-50 border border-slate-200/80 px-3 py-2 text-[11px] text-slate-500 space-y-0.5">
             <div className="truncate">原始文件名：{paper.fileName}</div>
             <div className="font-mono truncate">SHA-256：{paper.sha256}</div>
           </div>
         </div>
 
-        <div className="flex items-center justify-end gap-2 px-5 py-3 bg-slate-50 border-t border-slate-100">
+        <div className="flex items-center justify-end gap-2 px-5 py-3 bg-slate-50 border-t border-slate-100 shrink-0">
           <button
             type="button"
             onClick={onClose}

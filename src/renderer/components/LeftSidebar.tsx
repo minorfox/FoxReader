@@ -3,6 +3,7 @@ import {
   CheckSquare,
   ChevronDown,
   ChevronRight,
+  Download,
   Folder as FolderIcon,
   FolderPlus,
   FileUp,
@@ -10,6 +11,7 @@ import {
   Library,
   Pencil,
   Plus,
+  Quote,
   Search,
   Settings,
   Square,
@@ -98,7 +100,9 @@ interface LeftSidebarProps {
   onRequestDeleteFolder: (folder: Folder) => void;
   onMovePaperToFolder: (paperId: string, folderId: string | null) => Promise<void>;
   onEditPaper: (paper: Paper) => void;
+  onCopyPaperBibtex: (paper: Paper) => void;
   onRequestDeletePaper: (paper: Paper) => void;
+  onExportBatchBibtex: (papers: Paper[], onDone: () => void) => void;
   onRequestBatchDeletePapers: (papers: Paper[], onDone: () => void) => void;
   onChangePaperStatus: (paperId: string, status: PaperStatus) => Promise<void>;
   onOpenSettings: () => void;
@@ -131,7 +135,9 @@ export function LeftSidebar({
   onRequestDeleteFolder,
   onMovePaperToFolder,
   onEditPaper,
+  onCopyPaperBibtex,
   onRequestDeletePaper,
+  onExportBatchBibtex,
   onRequestBatchDeletePapers,
   onChangePaperStatus,
   onOpenSettings,
@@ -583,7 +589,7 @@ export function LeftSidebar({
         {papers.length > 0 && (
           <button
             type="button"
-            title={batchMode ? '退出批量管理' : '批量选择并删除论文'}
+            title={batchMode ? '退出批量管理' : '批量选择论文（导出 BibTeX / 删除）'}
             onClick={() => (batchMode ? exitBatchMode() : setBatchMode(true))}
             className={`px-2 py-1 rounded text-[11px] font-medium transition shrink-0 ${
               batchMode
@@ -618,6 +624,15 @@ export function LeftSidebar({
             <span>全选 ({selectedBatchPapers.length}/{papers.length})</span>
           </button>
           <div className="flex items-center gap-1.5">
+            <button
+              type="button"
+              disabled={selectedBatchPapers.length === 0}
+              onClick={() => onExportBatchBibtex(selectedBatchPapers, exitBatchMode)}
+              className="inline-flex items-center gap-1 px-2 py-1 rounded bg-violet-600 hover:bg-violet-700 disabled:opacity-40 text-white text-[11px] font-medium transition"
+            >
+              <Download className="w-3 h-3" />
+              导出 .bib
+            </button>
             <button
               type="button"
               disabled={selectedBatchPapers.length === 0}
@@ -700,6 +715,17 @@ export function LeftSidebar({
                   </div>
                   {!batchMode && (
                     <div className="hidden group-hover:flex items-center gap-0.5 shrink-0">
+                      <button
+                        type="button"
+                        title="复制 BibTeX 引用"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onCopyPaperBibtex(paper);
+                        }}
+                        className="p-1 rounded hover:bg-slate-200/80 text-slate-500 hover:text-violet-700"
+                      >
+                        <Quote className="w-3 h-3" />
+                      </button>
                       <button
                         type="button"
                         title="编辑元数据"
