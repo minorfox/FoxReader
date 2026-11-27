@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-11-27
+
 ### Fixed
 
 - Persisted and restored Markdown reading scroll position (`last_scroll_ratio`) and font zoom (`last_zoom`) in SQLite so progress survives switches and restarts across Windows and macOS.
