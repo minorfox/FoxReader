@@ -115,7 +115,7 @@ jobs:
               "",
               "### 首次打开提示说明",
               "- **Windows**：个人开源项目未购买商业代码签名证书，若弹出「Windows 已保护你的电脑（SmartScreen）」，点击 **「更多信息 → 仍要运行」** 即可。",
-              "- **macOS**：若提示「已损坏」或「无法验证开发者」，在终端执行 `xattr -cr /Applications/FoxReader.app` 后即可正常打开。",
+              "- **macOS**：个人开源项目未购买商业 Apple Developer ID 公证，通过浏览器直接下载安装或覆盖升级时，macOS Gatekeeper 会写入 `com.apple.quarantine` 隔离标记并提示「已损坏，无法打开」或「无法验证开发者」（并非安装包损坏）。将 `FoxReader.app` 拖入「应用程序」后，在终端执行系统完整路径命令 `/usr/bin/xattr -r -d com.apple.quarantine /Applications/FoxReader.app` 即可正常打开（使用 `/usr/bin/xattr` 可避免 Conda / Homebrew 同名工具报 `invalid option`；Apple Silicon 机型若清除后仍无法启动，可补执行 `/usr/bin/codesign -f --deep -s - /Applications/FoxReader.app`）。",
               "- **OneDrive 多机同步**：只需在软件设置中将数据目录指向网盘内的同一个 `FoxReaderData/` 文件夹，并遵循单台退出同步完再开另一台的接力原则。",
               "- **问题反馈与联系**：`lihuang@swufe.edu.cn`",
               ""
