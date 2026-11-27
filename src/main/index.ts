@@ -597,7 +597,11 @@ function registerIpcHandlers(): void {
   ipcMain.handle(
     'papers:updateProgress',
     (_event, paperId: string, lastPage: number, lastZoom: number, lastScrollRatio?: number) => {
-      database.updatePaperProgress(paperId, lastPage, lastZoom, lastScrollRatio);
+      try {
+        database?.updatePaperProgress(paperId, lastPage, lastZoom, lastScrollRatio);
+      } catch {
+        // Ignore transient write errors during app shutdown
+      }
     },
   );
 
@@ -784,38 +788,71 @@ function setupApplicationMenu(): void {
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
 
-app.whenReady().then(() => {
-  settingsManager = new SettingsManager(app.getPath('userData'));
-  const dataDir = settingsManager.getDataDir();
-  currentLockWarning = dataDirLock.acquire(dataDir);
-  database = new FoxReaderDatabase(dataDir);
+const gotSingleInstanceLock = app.requestSingleInstanceLock();
 
-  registerFoxPdfProtocol();
-  registerIpcHandlers();
-  setupApplicationMenu();
-  mainWindow = createMainWindow();
-
-  const launchedAfterUpdate = process.argv.includes('--updated');
-  setTimeout(() => {
-    void appUpdater.cleanupStaleUpdateFiles(launchedAfterUpdate);
-  }, 4000);
-
-  app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) {
+if (!gotSingleInstanceLock) {
+  app.quit();
+} else {
+  app.on('second-instance', () => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      if (mainWindow.isMinimized()) {
+        mainWindow.restore();
+      }
+      mainWindow.show();
+      mainWindow.focus();
+    } else if (app.isReady() && database) {
       mainWindow = createMainWindow();
     }
   });
-});
 
-app.on('before-quit', () => {
+  app.whenReady().then(() => {
+    try {
+      settingsManager = new SettingsManager(app.getPath('userData'));
+      const dataDir = settingsManager.getDataDir();
+      currentLockWarning = dataDirLock.acquire(dataDir);
+      database = new FoxReaderDatabase(dataDir);
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      dialog.showErrorBox(
+        'FoxReader 启动失败',
+        `无法初始化本地数据库（如数据目录位于 OneDrive / iCloud 中，请等待网盘同步完成后重试）：\n\n${detail}`,
+      );
+      dataDirLock.release();
+      app.quit();
+      return;
+    }
+
+    registerFoxPdfProtocol();
+    registerIpcHandlers();
+    setupApplicationMenu();
+    mainWindow = createMainWindow();
+
+    const launchedAfterUpdate = process.argv.includes('--updated');
+    setTimeout(() => {
+      void appUpdater.cleanupStaleUpdateFiles(launchedAfterUpdate);
+    }, 4000);
+
+    app.on('activate', () => {
+      if (BrowserWindow.getAllWindows().length === 0) {
+        mainWindow = createMainWindow();
+      } else if (mainWindow && !mainWindow.isDestroyed()) {
+        if (mainWindow.isMinimized()) {
+          mainWindow.restore();
+        }
+        mainWindow.show();
+        mainWindow.focus();
+      }
+    });
+  });
+}
+
+app.on('will-quit', () => {
   dataDirLock.release();
   database?.close();
 });
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
-    dataDirLock.release();
-    database?.close();
     app.quit();
   }
 });

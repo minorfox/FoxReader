@@ -233,8 +233,26 @@ function parseMarkdownHeader(
   };
 }
 
+function isTransientLockError(error: unknown): boolean {
+  const msg = error instanceof Error ? error.message : String(error);
+  return /SQLITE_BUSY|SQLITE_LOCKED|database is locked|EBUSY|EAGAIN/i.test(msg);
+}
+
+function sleepSync(ms: number): void {
+  if (ms <= 0) return;
+  try {
+    const sab = new SharedArrayBuffer(4);
+    Atomics.wait(new Int32Array(sab), 0, 0, ms);
+  } catch {
+    const deadline = Date.now() + ms;
+    while (Date.now() < deadline) {
+      // Fallback busy wait if SharedArrayBuffer is disabled
+    }
+  }
+}
+
 export class FoxReaderDatabase {
-  private readonly db: DatabaseSync;
+  private readonly db!: DatabaseSync;
   private readonly dataDir: string;
   public readonly dbPath: string;
 
@@ -246,12 +264,46 @@ export class FoxReaderDatabase {
     fs.mkdirSync(path.join(dataDir, 'snapshots'), { recursive: true });
 
     this.dbPath = path.join(dataDir, 'library.db');
-    this.db = new DatabaseSync(this.dbPath);
-    this.db.exec('PRAGMA foreign_keys = ON;');
-    // Flush any prior WAL journal from earlier versions and stick to single-file DELETE mode for safe OneDrive sync
-    this.db.exec('PRAGMA wal_checkpoint(TRUNCATE);');
-    this.db.exec('PRAGMA journal_mode = DELETE;');
-    this.initSchema();
+
+    const maxAttempts = 6;
+    let openedDb: DatabaseSync | null = null;
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      let candidate: DatabaseSync | null = null;
+      try {
+        candidate = new DatabaseSync(this.dbPath);
+        this.db = candidate;
+        this.db.exec('PRAGMA busy_timeout = 8000;');
+        this.db.exec('PRAGMA foreign_keys = ON;');
+        // Avoid redundant write locks on OneDrive/iCloud when already in DELETE mode
+        if (this.getJournalMode().toLowerCase() !== 'delete') {
+          this.db.exec('PRAGMA wal_checkpoint(TRUNCATE);');
+          this.db.exec('PRAGMA journal_mode = DELETE;');
+        }
+        this.initSchema();
+        openedDb = candidate;
+        break;
+      } catch (error) {
+        try {
+          candidate?.close();
+        } catch {
+          // Ignore close error after failed init
+        }
+        if (attempt < maxAttempts && isTransientLockError(error)) {
+          sleepSync(250 * attempt);
+          continue;
+        }
+        throw error;
+      }
+    }
+    if (!openedDb) {
+      throw new Error('Failed to open FoxReader SQLite database.');
+    }
+    this.db = openedDb;
+  }
+
+  public getBusyTimeout(): number {
+    const row = this.db.prepare('PRAGMA busy_timeout').get() as { timeout?: number; busy_timeout?: number };
+    return row.timeout ?? row.busy_timeout ?? 0;
   }
 
   public getJournalMode(): string {

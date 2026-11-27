@@ -347,14 +347,40 @@ export function App() {
     [handleImportResults, pushToast],
   );
 
-  const handleCreateFolder = async (name: string, parentId: string | null) => {
-    await window.foxreader.createFolder(name, parentId);
-    await refreshOverview();
+  const handleCreateFolder = async (name: string, parentId: string | null): Promise<boolean> => {
+    try {
+      await window.foxreader.createFolder(name, parentId);
+      await refreshOverview();
+      return true;
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      const isBusy = /busy|locked/i.test(msg);
+      pushToast(
+        'warning',
+        isBusy
+          ? '新建文件夹失败：数据库正在被网盘同步短暂占用，请稍后重试'
+          : `新建文件夹失败：${msg}`,
+      );
+      return false;
+    }
   };
 
-  const handleRenameFolder = async (id: string, name: string) => {
-    await window.foxreader.renameFolder(id, name);
-    await refreshOverview();
+  const handleRenameFolder = async (id: string, name: string): Promise<boolean> => {
+    try {
+      await window.foxreader.renameFolder(id, name);
+      await refreshOverview();
+      return true;
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      const isBusy = /busy|locked/i.test(msg);
+      pushToast(
+        'warning',
+        isBusy
+          ? '重命名文件夹失败：数据库正在被网盘同步短暂占用，请稍后重试'
+          : `重命名文件夹失败：${msg}`,
+      );
+      return false;
+    }
   };
 
   const handleMoveFolder = async (id: string, parentId: string | null) => {

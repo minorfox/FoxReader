@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
+  Check,
   CheckSquare,
   ChevronDown,
   ChevronRight,
@@ -95,8 +96,8 @@ interface LeftSidebarProps {
   onSelectPaper: (paperId: string) => void;
   onPickAndImport: (folderId: string | null) => void;
   onImportFiles: (files: File[], folderId: string | null) => void;
-  onCreateFolder: (name: string, parentId: string | null) => Promise<void>;
-  onRenameFolder: (id: string, name: string) => Promise<void>;
+  onCreateFolder: (name: string, parentId: string | null) => Promise<boolean | void>;
+  onRenameFolder: (id: string, name: string) => Promise<boolean | void>;
   onMoveFolder: (id: string, parentId: string | null) => Promise<void>;
   onRequestDeleteFolder: (folder: Folder) => void;
   onMovePaperToFolder: (paperId: string, folderId: string | null) => Promise<void>;
@@ -155,6 +156,8 @@ export function LeftSidebar({
   const [batchMode, setBatchMode] = useState(false);
   const [batchSelectedIds, setBatchSelectedIds] = useState<Set<string>>(() => new Set());
   const lastBatchIdxRef = useRef<number | null>(null);
+  const submittingCreateRef = useRef(false);
+  const submittingRenameRef = useRef(false);
 
   useEffect(() => {
     const visibleIds = new Set(papers.map((p) => p.id));
@@ -234,25 +237,53 @@ export function LeftSidebar({
     }
   };
 
-  const handleSubmitCreate = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const commitCreateFolder = async () => {
+    if (submittingCreateRef.current) return;
     const name = newFolderName.trim();
-    if (!name || creatingParentId === undefined) {
+    const targetParent = creatingParentId;
+    if (!name || targetParent === undefined) {
       setCreatingParentId(undefined);
+      setNewFolderName('');
       return;
     }
-    await onCreateFolder(name, creatingParentId);
-    setCreatingParentId(undefined);
-    setNewFolderName('');
+    submittingCreateRef.current = true;
+    try {
+      const ok = await onCreateFolder(name, targetParent);
+      if (ok !== false) {
+        setCreatingParentId(undefined);
+        setNewFolderName('');
+      }
+    } finally {
+      submittingCreateRef.current = false;
+    }
   };
 
-  const handleSubmitRename = async (e: React.FormEvent, id: string) => {
+  const handleSubmitCreate = (e: React.FormEvent) => {
     e.preventDefault();
+    void commitCreateFolder();
+  };
+
+  const commitRenameFolder = async (id: string) => {
+    if (submittingRenameRef.current) return;
     const name = renameValue.trim();
-    if (name) {
-      await onRenameFolder(id, name);
+    if (!name) {
+      setRenamingId(null);
+      return;
     }
-    setRenamingId(null);
+    submittingRenameRef.current = true;
+    try {
+      const ok = await onRenameFolder(id, name);
+      if (ok !== false) {
+        setRenamingId(null);
+      }
+    } finally {
+      submittingRenameRef.current = false;
+    }
+  };
+
+  const handleSubmitRename = (e: React.FormEvent, id: string) => {
+    e.preventDefault();
+    void commitRenameFolder(id);
   };
 
   const handleDropOnFolder = async (e: React.DragEvent, targetFolderId: string | null) => {
@@ -285,6 +316,46 @@ export function LeftSidebar({
       onImportFiles(Array.from(e.dataTransfer.files), targetFolderId);
     }
   };
+
+  const renderCreateFolderForm = (paddingLeftPx: number, placeholder: string) => (
+    <form
+      onSubmit={handleSubmitCreate}
+      style={{ paddingLeft: `${paddingLeftPx}px` }}
+      className="pr-2 py-1 flex items-center gap-1"
+      onClick={(e) => e.stopPropagation()}
+    >
+      <input
+        autoFocus
+        placeholder={placeholder}
+        value={newFolderName}
+        onChange={(e) => setNewFolderName(e.target.value)}
+        onBlur={() => {
+          if (!submittingCreateRef.current) {
+            setCreatingParentId(undefined);
+          }
+        }}
+        onKeyDown={(e) => {
+          if (e.key === 'Escape') {
+            setCreatingParentId(undefined);
+            return;
+          }
+          if (e.key === 'Enter' && !e.nativeEvent.isComposing && e.keyCode !== 229) {
+            e.preventDefault();
+            void commitCreateFolder();
+          }
+        }}
+        className="flex-1 min-w-0 rounded border border-violet-400 bg-white px-2 py-1 text-xs focus:outline-none"
+      />
+      <button
+        type="submit"
+        title="确认创建"
+        onMouseDown={(e) => e.preventDefault()}
+        className="p-1 rounded bg-violet-600 hover:bg-violet-700 text-white shrink-0 transition"
+      >
+        <Check className="w-3 h-3" />
+      </button>
+    </form>
+  );
 
   const renderFolderNode = (node: FolderNode, depth: number) => {
     const isExpanded = expandedIds.has(node.id);
@@ -348,20 +419,39 @@ export function LeftSidebar({
 
           {renamingId === node.id ? (
             <form
-              onSubmit={(e) => void handleSubmitRename(e, node.id)}
-              className="flex-1 min-w-0"
+              onSubmit={(e) => handleSubmitRename(e, node.id)}
+              className="flex-1 min-w-0 flex items-center gap-1"
               onClick={(e) => e.stopPropagation()}
             >
               <input
                 autoFocus
                 value={renameValue}
                 onChange={(e) => setRenameValue(e.target.value)}
-                onBlur={() => setRenamingId(null)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Escape') setRenamingId(null);
+                onBlur={() => {
+                  if (!submittingRenameRef.current) {
+                    setRenamingId(null);
+                  }
                 }}
-                className="w-full rounded border border-violet-400 bg-white px-1.5 py-0.5 text-xs focus:outline-none"
+                onKeyDown={(e) => {
+                  if (e.key === 'Escape') {
+                    setRenamingId(null);
+                    return;
+                  }
+                  if (e.key === 'Enter' && !e.nativeEvent.isComposing && e.keyCode !== 229) {
+                    e.preventDefault();
+                    void commitRenameFolder(node.id);
+                  }
+                }}
+                className="flex-1 min-w-0 rounded border border-violet-400 bg-white px-1.5 py-0.5 text-xs focus:outline-none"
               />
+              <button
+                type="submit"
+                title="确认重命名"
+                onMouseDown={(e) => e.preventDefault()}
+                className="p-0.5 rounded bg-violet-600 hover:bg-violet-700 text-white shrink-0 transition"
+              >
+                <Check className="w-3 h-3" />
+              </button>
             </form>
           ) : (
             <span className="flex-1 truncate">{node.name}</span>
@@ -423,25 +513,8 @@ export function LeftSidebar({
           </span>
         </div>
 
-        {creatingParentId === node.id && (
-          <form
-            onSubmit={(e) => void handleSubmitCreate(e)}
-            style={{ paddingLeft: `${24 + (depth + 1) * 14}px` }}
-            className="pr-2 py-1"
-          >
-            <input
-              autoFocus
-              placeholder="子文件夹名称..."
-              value={newFolderName}
-              onChange={(e) => setNewFolderName(e.target.value)}
-              onBlur={() => setCreatingParentId(undefined)}
-              onKeyDown={(e) => {
-                if (e.key === 'Escape') setCreatingParentId(undefined);
-              }}
-              className="w-full rounded border border-violet-400 bg-white px-2 py-1 text-xs focus:outline-none"
-            />
-          </form>
-        )}
+        {creatingParentId === node.id &&
+          renderCreateFolderForm(24 + (depth + 1) * 14, '子文件夹名称...')}
 
         {isExpanded && node.children.map((child) => renderFolderNode(child, depth + 1))}
       </div>
@@ -574,21 +647,7 @@ export function LeftSidebar({
             <span className="text-[10px] text-slate-400 tabular-nums shrink-0">{unclassifiedCount}</span>
           </div>
 
-          {creatingParentId === null && (
-            <form onSubmit={(e) => void handleSubmitCreate(e)} className="px-2 py-1">
-              <input
-                autoFocus
-                placeholder="输入文件夹名称后回车..."
-                value={newFolderName}
-                onChange={(e) => setNewFolderName(e.target.value)}
-                onBlur={() => setCreatingParentId(undefined)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Escape') setCreatingParentId(undefined);
-                }}
-                className="w-full rounded border border-violet-400 bg-white px-2 py-1 text-xs focus:outline-none"
-              />
-            </form>
-          )}
+          {creatingParentId === null && renderCreateFolderForm(8, '输入文件夹名称后回车...')}
 
           {folderTree.map((node) => renderFolderNode(node, 0))}
         </div>

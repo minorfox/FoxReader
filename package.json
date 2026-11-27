@@ -22,6 +22,7 @@
   "build": {
     "appId": "com.minorfox.foxreader",
     "productName": "FoxReader",
+    "afterPack": "./scripts/afterPack.cjs",
     "directories": {
       "output": "release"
     },

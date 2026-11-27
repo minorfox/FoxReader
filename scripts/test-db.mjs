@@ -570,6 +570,8 @@ We investigate sparse attention mechanisms with KaTeX formula $E = mc^2$ and uni
     progressLegacyRaw.close();
 
     const progressMigratedDb = new FoxReaderDatabase(progressLegacyDir);
+    assert.ok(progressMigratedDb.getBusyTimeout() >= 5000, 'SQLite busy_timeout should be configured');
+    assert.equal(progressMigratedDb.getJournalMode().toLowerCase(), 'delete');
     const progressLegacyPaper = progressMigratedDb.getPaperById('legacy-progress-1');
     assert.equal(progressLegacyPaper.lastScrollRatio, 0);
     progressMigratedDb.updatePaperProgress('legacy-progress-1', 1, 1.2, 0.67);
