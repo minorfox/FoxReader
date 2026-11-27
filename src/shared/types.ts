@@ -92,6 +92,7 @@ export interface Paper {
   pageCount: number;
   lastPage: number;
   lastZoom: number;
+  lastScrollRatio: number;
   fileName: string;
   fileType: PaperFileType;
   createdAt: number;
@@ -329,7 +330,12 @@ export interface FoxReaderApi {
   relinkPaperFile: (paperId: string) => Promise<RelinkPaperFileResult>;
   exportBibtex: (paperIds: string[], defaultFileName?: string) => Promise<ExportBibtexResult>;
   movePaperToFolder: (paperId: string, folderId: string | null) => Promise<Paper>;
-  updatePaperProgress: (paperId: string, lastPage: number, lastZoom: number) => Promise<void>;
+  updatePaperProgress: (
+    paperId: string,
+    lastPage: number,
+    lastZoom: number,
+    lastScrollRatio?: number,
+  ) => Promise<void>;
   deletePaper: (paperId: string) => Promise<void>;
   deletePapers: (paperIds: string[]) => Promise<DeletePapersResult>;
   listAnnotations: (paperId: string) => Promise<Annotation[]>;

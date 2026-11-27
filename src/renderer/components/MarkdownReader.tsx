@@ -66,6 +66,7 @@ interface MarkdownReaderProps {
   onOpenSettings?: () => void;
   onCopyText: (text: string) => void;
   onChangePaperStatus: (paperId: string, status: PaperStatus) => Promise<void>;
+  onSaveProgress: (paperId: string, lastPage: number, lastZoom: number, lastScrollRatio?: number) => void;
   reloadNonce?: number;
   onOpenDocsDir?: () => void;
   onRelinkPaperFile?: (paperId: string) => Promise<void>;
@@ -149,6 +150,7 @@ export function MarkdownReader({
   onOpenSettings,
   onCopyText,
   onChangePaperStatus,
+  onSaveProgress,
   reloadNonce = 0,
   onOpenDocsDir,
   onRelinkPaperFile,
@@ -159,6 +161,17 @@ export function MarkdownReader({
   const searchMarksRef = useRef<HTMLElement[]>([]);
   const translateReqIdRef = useRef(0);
   const autoMarkedReadPaperIdRef = useRef<string | null>(null);
+  const onSaveProgressRef = useRef(onSaveProgress);
+  onSaveProgressRef.current = onSaveProgress;
+  const isRestoringRef = useRef(true);
+  const pendingInitialRatioRef = useRef<number | null>(null);
+  const pendingProgressRef = useRef<{
+    paperId: string;
+    zoom: number;
+    scrollRatio: number;
+    dirty: boolean;
+  } | null>(null);
+  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const [rawContent, setRawContent] = useState('');
   const [loading, setLoading] = useState(true);
@@ -179,10 +192,68 @@ export function MarkdownReader({
   const [selectionBar, setSelectionBar] = useState<MarkdownSelectionPrompt | null>(null);
   const [translationCard, setTranslationCard] = useState<MarkdownTranslationCardState | null>(null);
 
+  const flushPendingProgress = useCallback(() => {
+    if (saveTimerRef.current !== null) {
+      clearTimeout(saveTimerRef.current);
+      saveTimerRef.current = null;
+    }
+    const pending = pendingProgressRef.current;
+    if (!pending || !pending.dirty) return;
+    pending.dirty = false;
+    onSaveProgressRef.current(pending.paperId, 1, pending.zoom, pending.scrollRatio);
+  }, []);
+
+  const scheduleProgressSave = useCallback(
+    (paperId: string, zoomValue: number, scrollRatio: number) => {
+      pendingProgressRef.current = {
+        paperId,
+        zoom: zoomValue,
+        scrollRatio,
+        dirty: true,
+      };
+      if (saveTimerRef.current !== null) {
+        clearTimeout(saveTimerRef.current);
+      }
+      saveTimerRef.current = setTimeout(() => {
+        flushPendingProgress();
+      }, 350);
+    },
+    [flushPendingProgress],
+  );
+
+  useEffect(() => {
+    const handleUnload = () => {
+      flushPendingProgress();
+    };
+    window.addEventListener('beforeunload', handleUnload);
+    window.addEventListener('pagehide', handleUnload);
+    return () => {
+      window.removeEventListener('beforeunload', handleUnload);
+      window.removeEventListener('pagehide', handleUnload);
+      flushPendingProgress();
+    };
+  }, [flushPendingProgress]);
+
   useEffect(() => {
     let cancelled = false;
+    flushPendingProgress();
+    isRestoringRef.current = true;
     translateReqIdRef.current += 1;
     autoMarkedReadPaperIdRef.current = null;
+
+    const initialZoom = Math.min(1.6, Math.max(0.75, paper.lastZoom || 1.0));
+    const initialScale = Math.round(initialZoom * 100);
+    const initialRatio = Math.min(1, Math.max(0, paper.lastScrollRatio || 0));
+
+    setFontScale(initialScale);
+    pendingInitialRatioRef.current = initialRatio;
+    pendingProgressRef.current = {
+      paperId: paper.id,
+      zoom: initialZoom,
+      scrollRatio: initialRatio,
+      dirty: false,
+    };
+
     if (scrollContainerRef.current) {
       scrollContainerRef.current.scrollTop = 0;
     }
@@ -222,8 +293,44 @@ export function MarkdownReader({
 
     return () => {
       cancelled = true;
+      flushPendingProgress();
     };
-  }, [paper.id, paper.sha256, reloadNonce, retryNonce]);
+  }, [paper.id, paper.sha256, reloadNonce, retryNonce, flushPendingProgress]);
+
+  // Restore saved scroll position after Markdown & KaTeX content renders
+  useEffect(() => {
+    if (loading || loadError || pendingInitialRatioRef.current === null) return;
+    const targetRatio = pendingInitialRatioRef.current;
+    pendingInitialRatioRef.current = null;
+
+    let cancelled = false;
+    let raf1 = 0;
+    let raf2 = 0;
+    let settleTimer: ReturnType<typeof setTimeout> | null = null;
+
+    raf1 = requestAnimationFrame(() => {
+      raf2 = requestAnimationFrame(() => {
+        if (cancelled) return;
+        const el = scrollContainerRef.current;
+        if (el) {
+          const maxScroll = el.scrollHeight - el.clientHeight;
+          el.scrollTop = maxScroll > 0 && targetRatio > 0 ? Math.round(targetRatio * maxScroll) : 0;
+        }
+        settleTimer = setTimeout(() => {
+          if (!cancelled) {
+            isRestoringRef.current = false;
+          }
+        }, 80);
+      });
+    });
+
+    return () => {
+      cancelled = true;
+      cancelAnimationFrame(raf1);
+      cancelAnimationFrame(raf2);
+      if (settleTimer !== null) clearTimeout(settleTimer);
+    };
+  }, [paper.id, loading, loadError, rawContent]);
 
   const bodyMarkdown = useMemo(() => stripYamlFrontmatter(rawContent), [rawContent]);
 
@@ -270,6 +377,29 @@ export function MarkdownReader({
       if (timerId !== null) clearTimeout(timerId);
     };
   }, [paper.id, paper.status, loading, loadError, rawContent, fontScale, markReadIfAtBottom]);
+
+  const handleContainerScroll = useCallback(() => {
+    markReadIfAtBottom();
+    if (loading || loadError || isRestoringRef.current) return;
+    const el = scrollContainerRef.current;
+    if (!el) return;
+    const maxScroll = el.scrollHeight - el.clientHeight;
+    const ratio = maxScroll > 1 ? Math.min(1, Math.max(0, el.scrollTop / maxScroll)) : 0;
+    scheduleProgressSave(paper.id, Number((fontScale / 100).toFixed(2)), ratio);
+  }, [markReadIfAtBottom, loading, loadError, paper.id, fontScale, scheduleProgressSave]);
+
+  const applyFontScale = useCallback(
+    (nextScale: number) => {
+      const clamped = Math.min(160, Math.max(75, nextScale));
+      setFontScale(clamped);
+      if (loading || loadError || isRestoringRef.current) return;
+      const el = scrollContainerRef.current;
+      const maxScroll = el ? el.scrollHeight - el.clientHeight : 0;
+      const ratio = el && maxScroll > 1 ? Math.min(1, Math.max(0, el.scrollTop / maxScroll)) : 0;
+      scheduleProgressSave(paper.id, Number((clamped / 100).toFixed(2)), ratio);
+    },
+    [loading, loadError, paper.id, scheduleProgressSave],
+  );
 
   const renderedArticle = useMemo(
     () => (
@@ -474,7 +604,7 @@ export function MarkdownReader({
           <div className="flex items-center gap-1 rounded-lg border border-slate-200 bg-slate-50 px-1.5 py-0.5">
             <button
               type="button"
-              onClick={() => setFontScale((s) => Math.max(75, s - 10))}
+              onClick={() => applyFontScale(fontScale - 10)}
               title="缩小字号"
               className="p-1 rounded text-slate-600 hover:bg-white transition"
             >
@@ -482,7 +612,7 @@ export function MarkdownReader({
             </button>
             <button
               type="button"
-              onClick={() => setFontScale(100)}
+              onClick={() => applyFontScale(100)}
               title="重置字号为 100%"
               className="px-1.5 py-0.5 rounded text-xs tabular-nums text-slate-700 hover:bg-white transition min-w-[44px]"
             >
@@ -490,7 +620,7 @@ export function MarkdownReader({
             </button>
             <button
               type="button"
-              onClick={() => setFontScale((s) => Math.min(160, s + 10))}
+              onClick={() => applyFontScale(fontScale + 10)}
               title="放大字号"
               className="p-1 rounded text-slate-600 hover:bg-white transition"
             >
@@ -546,7 +676,7 @@ export function MarkdownReader({
       {/* Scrollable Document Area */}
       <div
         ref={scrollContainerRef}
-        onScroll={markReadIfAtBottom}
+        onScroll={handleContainerScroll}
         className="flex-1 overflow-y-auto px-6 py-6"
       >
         {loading ? (

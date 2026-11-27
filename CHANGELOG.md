@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Persisted and restored Markdown reading scroll position (`last_scroll_ratio`) and font zoom (`last_zoom`) in SQLite so progress survives switches and restarts across Windows and macOS.
+- Fixed PDF reading position resets caused by stale in-memory progress state on same-session switches, `IntersectionObserver` racing with initial page restore, unsaved debounced progress being dropped on quick switches or exit, and sub-page / single-page PDFs lacking scroll-ratio restoration.
+
 ## [0.3.1] - 2026-11-26
 
 ### Improved

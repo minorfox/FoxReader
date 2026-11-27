@@ -546,9 +546,29 @@ export function App() {
     pushToast('info', `已批量删除 ${deletedCount} 篇论文及其本地托管副本`);
   };
 
-  const handleSaveProgress = useCallback((paperId: string, lastPage: number, lastZoom: number) => {
-    void window.foxreader.updatePaperProgress(paperId, lastPage, lastZoom);
-  }, []);
+  const handleSaveProgress = useCallback(
+    (paperId: string, lastPage: number, lastZoom: number, lastScrollRatio?: number) => {
+      const safePage = Math.max(1, Math.floor(lastPage));
+      const safeZoom = Math.min(4.0, Math.max(0.25, lastZoom));
+      const hasRatio = typeof lastScrollRatio === 'number' && Number.isFinite(lastScrollRatio);
+      const safeRatio = hasRatio ? Math.min(1, Math.max(0, lastScrollRatio)) : undefined;
+
+      setPapers((prev) =>
+        prev.map((p) =>
+          p.id === paperId
+            ? {
+                ...p,
+                lastPage: safePage,
+                lastZoom: safeZoom,
+                ...(safeRatio !== undefined ? { lastScrollRatio: safeRatio } : {}),
+              }
+            : p,
+        ),
+      );
+      void window.foxreader.updatePaperProgress(paperId, safePage, safeZoom, safeRatio);
+    },
+    [],
+  );
 
   const handleSyncPageCount = useCallback(
     (paperId: string, pageCount: number) => {
@@ -813,6 +833,7 @@ export function App() {
           onOpenSettings={() => setSettingsOpen(true)}
           onCopyText={handleCopyText}
           onChangePaperStatus={handleChangePaperStatus}
+          onSaveProgress={handleSaveProgress}
           reloadNonce={readerReloadNonce}
           onOpenDocsDir={() => void window.foxreader.openDataDir('docs')}
           onRelinkPaperFile={handleRelinkPaperFile}

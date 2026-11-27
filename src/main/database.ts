@@ -72,6 +72,7 @@ interface PaperRow {
   page_count: number;
   last_page: number;
   last_zoom: number;
+  last_scroll_ratio?: number;
   file_name: string;
   file_type?: PaperFileType;
   created_at: number;
@@ -292,6 +293,7 @@ export class FoxReaderDatabase {
         page_count INTEGER NOT NULL DEFAULT 0,
         last_page INTEGER NOT NULL DEFAULT 1,
         last_zoom REAL NOT NULL DEFAULT 1.0,
+        last_scroll_ratio REAL NOT NULL DEFAULT 0,
         file_name TEXT NOT NULL,
         file_type TEXT NOT NULL DEFAULT 'pdf' CHECK(file_type IN ('pdf', 'md')),
         created_at INTEGER NOT NULL,
@@ -364,6 +366,9 @@ export class FoxReaderDatabase {
         this.db.exec(`ALTER TABLE papers ADD COLUMN ${col} TEXT NOT NULL DEFAULT '';`);
       }
     }
+    if (!paperCols.some((c) => c.name === 'last_scroll_ratio')) {
+      this.db.exec(`ALTER TABLE papers ADD COLUMN last_scroll_ratio REAL NOT NULL DEFAULT 0;`);
+    }
 
     const ftsCols = this.db
       .prepare('PRAGMA table_info(search_fts)')
@@ -433,6 +438,10 @@ export class FoxReaderDatabase {
       pageCount: row.page_count,
       lastPage: row.last_page,
       lastZoom: row.last_zoom,
+      lastScrollRatio:
+        typeof row.last_scroll_ratio === 'number' && Number.isFinite(row.last_scroll_ratio)
+          ? Math.min(1, Math.max(0, row.last_scroll_ratio))
+          : 0,
       fileName: row.file_name,
       fileType: row.file_type === 'md' ? 'md' : 'pdf',
       createdAt: row.created_at,
@@ -974,9 +983,21 @@ export class FoxReaderDatabase {
     return this.updatePaperMetadata(paperId, { folderId });
   }
 
-  public updatePaperProgress(paperId: string, lastPage: number, lastZoom: number): void {
+  public updatePaperProgress(
+    paperId: string,
+    lastPage: number,
+    lastZoom: number,
+    lastScrollRatio?: number,
+  ): void {
     const safePage = Math.max(1, Math.floor(lastPage));
     const safeZoom = Math.min(4.0, Math.max(0.25, lastZoom));
+    if (typeof lastScrollRatio === 'number' && Number.isFinite(lastScrollRatio)) {
+      const safeRatio = Math.min(1, Math.max(0, lastScrollRatio));
+      this.db
+        .prepare('UPDATE papers SET last_page = ?, last_zoom = ?, last_scroll_ratio = ? WHERE id = ?')
+        .run(safePage, safeZoom, safeRatio, paperId);
+      return;
+    }
     this.db
       .prepare('UPDATE papers SET last_page = ?, last_zoom = ? WHERE id = ?')
       .run(safePage, safeZoom, paperId);

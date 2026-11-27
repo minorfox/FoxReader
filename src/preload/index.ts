@@ -75,8 +75,12 @@ const api: FoxReaderApi = {
     ipcRenderer.invoke('papers:exportBibtex', paperIds, defaultFileName),
   movePaperToFolder: (paperId: string, folderId: string | null) =>
     ipcRenderer.invoke('papers:moveToFolder', paperId, folderId),
-  updatePaperProgress: (paperId: string, lastPage: number, lastZoom: number) =>
-    ipcRenderer.invoke('papers:updateProgress', paperId, lastPage, lastZoom),
+  updatePaperProgress: (
+    paperId: string,
+    lastPage: number,
+    lastZoom: number,
+    lastScrollRatio?: number,
+  ) => ipcRenderer.invoke('papers:updateProgress', paperId, lastPage, lastZoom, lastScrollRatio),
   deletePaper: (paperId: string) => ipcRenderer.invoke('papers:delete', paperId),
   deletePapers: (paperIds: string[]) => ipcRenderer.invoke('papers:deleteMany', paperIds),
   listAnnotations: (paperId: string) => ipcRenderer.invoke('annotations:list', paperId),

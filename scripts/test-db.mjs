@@ -521,7 +521,60 @@ We investigate sparse attention mechanisms with KaTeX formula $E = mc^2$ and uni
     assert.equal(ovAfterMove.folderCounts[topFolderA.id] ?? 0, 0);
     assert.equal(ovAfterMove.folderCounts[subFolderB.id], 1);
 
+    // 19. Reading progress persistence (page, zoom, scrollRatio) + clamping + omitted ratio preservation
+    recoveryDb.updatePaperProgress(secondImp.paper.id, 7, 1.35, 0.425);
+    let progressed = recoveryDb.getPaperById(secondImp.paper.id);
+    assert.equal(progressed.lastPage, 7);
+    assert.equal(progressed.lastZoom, 1.35);
+    assert.equal(progressed.lastScrollRatio, 0.425);
+
+    recoveryDb.updatePaperProgress(secondImp.paper.id, 8, 1.5);
+    progressed = recoveryDb.getPaperById(secondImp.paper.id);
+    assert.equal(progressed.lastPage, 8);
+    assert.equal(progressed.lastZoom, 1.5);
+    assert.equal(progressed.lastScrollRatio, 0.425, 'Omitting lastScrollRatio should preserve previous ratio');
+
+    recoveryDb.updatePaperProgress(secondImp.paper.id, 0, 9.9, 1.8);
+    progressed = recoveryDb.getPaperById(secondImp.paper.id);
+    assert.equal(progressed.lastPage, 1);
+    assert.equal(progressed.lastZoom, 4.0);
+    assert.equal(progressed.lastScrollRatio, 1.0);
+
     recoveryDb.close();
+
+    // 20. Legacy schema migration adds last_scroll_ratio column cleanly
+    const progressLegacyDir = path.join(tempRoot, 'progress-legacy-db-dir');
+    fs.mkdirSync(progressLegacyDir, { recursive: true });
+    const { DatabaseSync: SqliteDatabaseSync } = await import('node:sqlite');
+    const progressLegacyRaw = new SqliteDatabaseSync(path.join(progressLegacyDir, 'library.db'));
+    progressLegacyRaw.exec(`
+      CREATE TABLE papers (
+        id TEXT PRIMARY KEY,
+        sha256 TEXT UNIQUE NOT NULL,
+        title TEXT NOT NULL,
+        authors TEXT NOT NULL DEFAULT '',
+        year INTEGER NULL,
+        folder_id TEXT NULL,
+        status TEXT NOT NULL DEFAULT 'unread',
+        page_count INTEGER NOT NULL DEFAULT 0,
+        last_page INTEGER NOT NULL DEFAULT 1,
+        last_zoom REAL NOT NULL DEFAULT 1.0,
+        file_name TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+      CREATE VIRTUAL TABLE search_fts USING fts5(paper_id UNINDEXED, title, authors, affiliations, tags, quote_text, comment, content_md);
+      INSERT INTO papers (id, sha256, title, file_name, created_at, updated_at)
+      VALUES ('legacy-progress-1', '${'0'.repeat(64)}', 'Legacy Note', 'legacy.md', 1000, 1000);
+    `);
+    progressLegacyRaw.close();
+
+    const progressMigratedDb = new FoxReaderDatabase(progressLegacyDir);
+    const progressLegacyPaper = progressMigratedDb.getPaperById('legacy-progress-1');
+    assert.equal(progressLegacyPaper.lastScrollRatio, 0);
+    progressMigratedDb.updatePaperProgress('legacy-progress-1', 1, 1.2, 0.67);
+    assert.equal(progressMigratedDb.getPaperById('legacy-progress-1').lastScrollRatio, 0.67);
+    progressMigratedDb.close();
 
     console.log('ALL_DB_TESTS_PASSED');
   } finally {

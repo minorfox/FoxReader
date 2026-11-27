@@ -169,7 +169,7 @@ interface PdfReaderProps {
   onToggleRight: () => void;
   onToggleFullscreen?: () => void;
   onOpenSettings?: () => void;
-  onSaveProgress: (paperId: string, lastPage: number, lastZoom: number) => void;
+  onSaveProgress: (paperId: string, lastPage: number, lastZoom: number, lastScrollRatio?: number) => void;
   onSyncPageCount: (paperId: string, pageCount: number) => void;
   onCurrentPageChange?: (page: number) => void;
   onPickAndImport: () => void;
@@ -267,8 +267,64 @@ export function PdfReader({
   const pageTextCacheRef = useRef<Map<number, string>>(new Map());
 
   const visibleRatiosRef = useRef<Map<number, number>>(new Map());
-  const pendingInitialJumpRef = useRef<number | null>(null);
+  const pendingInitialRestoreRef = useRef<{ page: number; scrollRatio: number } | null>(null);
   const autoMarkedReadPaperIdRef = useRef<string | null>(null);
+  const onSaveProgressRef = useRef(onSaveProgress);
+  onSaveProgressRef.current = onSaveProgress;
+  const isRestoringRef = useRef(false);
+  const currentPageRef = useRef(1);
+  const effectiveZoomRef = useRef(1.0);
+  const pendingProgressRef = useRef<{
+    paperId: string;
+    page: number;
+    zoom: number;
+    scrollRatio: number;
+    dirty: boolean;
+  } | null>(null);
+  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const flushPendingProgress = useCallback(() => {
+    if (saveTimerRef.current !== null) {
+      clearTimeout(saveTimerRef.current);
+      saveTimerRef.current = null;
+    }
+    const pending = pendingProgressRef.current;
+    if (!pending || !pending.dirty) return;
+    pending.dirty = false;
+    onSaveProgressRef.current(pending.paperId, pending.page, pending.zoom, pending.scrollRatio);
+  }, []);
+
+  const scheduleProgressSave = useCallback(
+    (paperId: string, page: number, zoomValue: number, scrollRatio: number) => {
+      pendingProgressRef.current = {
+        paperId,
+        page,
+        zoom: zoomValue,
+        scrollRatio,
+        dirty: true,
+      };
+      if (saveTimerRef.current !== null) {
+        clearTimeout(saveTimerRef.current);
+      }
+      saveTimerRef.current = setTimeout(() => {
+        flushPendingProgress();
+      }, 400);
+    },
+    [flushPendingProgress],
+  );
+
+  useEffect(() => {
+    const handleUnload = () => {
+      flushPendingProgress();
+    };
+    window.addEventListener('beforeunload', handleUnload);
+    window.addEventListener('pagehide', handleUnload);
+    return () => {
+      window.removeEventListener('beforeunload', handleUnload);
+      window.removeEventListener('pagehide', handleUnload);
+      flushPendingProgress();
+    };
+  }, [flushPendingProgress]);
 
   const handlePageSizeMeasured = useCallback((pageNumber: number, width: number, height: number) => {
     setPageSizes((prev) => {
@@ -348,6 +404,7 @@ export function PdfReader({
 
   // Load PDF document when selected paper changes
   useEffect(() => {
+    flushPendingProgress();
     translateReqIdRef.current += 1;
     autoMarkedReadPaperIdRef.current = null;
     setSelectionBar(null);
@@ -366,6 +423,9 @@ export function PdfReader({
     setActiveOutlineId(null);
 
     if (!paper) {
+      isRestoringRef.current = false;
+      pendingInitialRestoreRef.current = null;
+      pendingProgressRef.current = null;
       setPdfDoc(null);
       setPageSizes([]);
       setLoadError(null);
@@ -380,7 +440,9 @@ export function PdfReader({
     const paperId = paper.id;
     const initialPage = Math.max(1, paper.lastPage || 1);
     const initialZoom = paper.lastZoom || 1.0;
+    const initialScrollRatio = Math.min(1, Math.max(0, paper.lastScrollRatio || 0));
 
+    isRestoringRef.current = true;
     setLoading(true);
     setLoadError(null);
     setFileStatus(null);
@@ -390,7 +452,14 @@ export function PdfReader({
     setZoom(initialZoom);
     setCurrentPage(initialPage);
     setPageInput(String(initialPage));
-    pendingInitialJumpRef.current = initialPage;
+    pendingInitialRestoreRef.current = { page: initialPage, scrollRatio: initialScrollRatio };
+    pendingProgressRef.current = {
+      paperId,
+      page: initialPage,
+      zoom: initialZoom,
+      scrollRatio: initialScrollRatio,
+      dirty: false,
+    };
     visibleRatiosRef.current.clear();
 
     const loadingTask = pdfjsLib.getDocument(getPdfDocumentOptions(sha));
@@ -454,12 +523,13 @@ export function PdfReader({
 
     return () => {
       cancelled = true;
+      flushPendingProgress();
       void loadingTask.destroy().catch(() => undefined);
       if (loadedDoc) {
         void loadedDoc.destroy().catch(() => undefined);
       }
     };
-  }, [paper?.id, paper?.sha256, reloadNonce, retryNonce]);
+  }, [paper?.id, paper?.sha256, reloadNonce, retryNonce, flushPendingProgress]);
 
   // Compute effective zoom when Fit-to-Width is enabled
   const effectiveZoom = useMemo(() => {
@@ -467,6 +537,16 @@ export function PdfReader({
     const baseW = pageSizes[0].width || 595;
     return Math.min(3.0, Math.max(0.35, Number((containerWidth / baseW).toFixed(3))));
   }, [fitWidth, pageSizes, containerWidth, zoom]);
+
+  currentPageRef.current = currentPage;
+  effectiveZoomRef.current = effectiveZoom;
+
+  const getScrollRatio = useCallback((): number => {
+    const el = scrollContainerRef.current;
+    if (!el) return 0;
+    const maxScroll = el.scrollHeight - el.clientHeight;
+    return maxScroll > 1 ? Math.min(1, Math.max(0, el.scrollTop / maxScroll)) : 0;
+  }, []);
 
   const scrollToPage = useCallback(
     (targetPage: number, behavior: ScrollBehavior = 'smooth') => {
@@ -482,16 +562,48 @@ export function PdfReader({
     [pageSizes.length],
   );
 
-  // Restore saved page scroll position after page placeholders mount
+  // Restore saved page/scroll position after page placeholders mount
   useEffect(() => {
-    if (!pdfDoc || pageSizes.length === 0 || pendingInitialJumpRef.current === null) return;
-    const target = Math.min(pageSizes.length, Math.max(1, pendingInitialJumpRef.current));
-    pendingInitialJumpRef.current = null;
-    if (target > 1) {
-      requestAnimationFrame(() => {
-        scrollToPage(target, 'auto');
+    if (!pdfDoc || pageSizes.length === 0 || pendingInitialRestoreRef.current === null) return;
+    const restore = pendingInitialRestoreRef.current;
+    pendingInitialRestoreRef.current = null;
+
+    let cancelled = false;
+    let raf1 = 0;
+    let raf2 = 0;
+    let settleTimer: ReturnType<typeof setTimeout> | null = null;
+
+    raf1 = requestAnimationFrame(() => {
+      raf2 = requestAnimationFrame(() => {
+        if (cancelled) return;
+        const targetPage = Math.min(pageSizes.length, Math.max(1, restore.page));
+        const el = scrollContainerRef.current;
+        if (restore.scrollRatio > 0 && el) {
+          const maxScroll = el.scrollHeight - el.clientHeight;
+          if (maxScroll > 0) {
+            el.scrollTop = Math.round(restore.scrollRatio * maxScroll);
+            setCurrentPage(targetPage);
+            setPageInput(String(targetPage));
+          } else if (targetPage > 1) {
+            scrollToPage(targetPage, 'auto');
+          }
+        } else if (targetPage > 1) {
+          scrollToPage(targetPage, 'auto');
+        }
+        settleTimer = setTimeout(() => {
+          if (!cancelled) {
+            isRestoringRef.current = false;
+          }
+        }, 120);
       });
-    }
+    });
+
+    return () => {
+      cancelled = true;
+      cancelAnimationFrame(raf1);
+      cancelAnimationFrame(raf2);
+      if (settleTimer !== null) clearTimeout(settleTimer);
+    };
   }, [pdfDoc, pageSizes.length, scrollToPage]);
 
   useEffect(() => {
@@ -632,7 +744,7 @@ export function PdfReader({
             bestPage = p;
           }
         }
-        if (bestPage !== null) {
+        if (bestPage !== null && !isRestoringRef.current) {
           setCurrentPage(bestPage);
           setPageInput(String(bestPage));
         }
@@ -651,15 +763,11 @@ export function PdfReader({
     return () => observer.disconnect();
   }, [pdfDoc, pageSizes.length]);
 
-  // Debounced reading progress persistence
+  // Debounced reading progress persistence on page/zoom change
   useEffect(() => {
-    if (!paper || !pdfDoc) return;
-    const paperId = paper.id;
-    const timer = setTimeout(() => {
-      onSaveProgress(paperId, currentPage, effectiveZoom);
-    }, 500);
-    return () => clearTimeout(timer);
-  }, [paper?.id, pdfDoc, currentPage, effectiveZoom, onSaveProgress]);
+    if (!paper || !pdfDoc || isRestoringRef.current) return;
+    scheduleProgressSave(paper.id, currentPage, effectiveZoom, getScrollRatio());
+  }, [paper?.id, pdfDoc, currentPage, effectiveZoom, getScrollRatio, scheduleProgressSave]);
 
   // Automatically promote status to 'read' once user reaches the final page
   useEffect(() => {
@@ -1173,6 +1281,9 @@ export function PdfReader({
         onScroll={() => {
           if (selectionBar) setSelectionBar(null);
           if (popover) setPopover(null);
+          if (!isRestoringRef.current && paper && pdfDoc) {
+            scheduleProgressSave(paper.id, currentPageRef.current, effectiveZoomRef.current, getScrollRatio());
+          }
         }}
         className="flex-1 overflow-auto p-6"
       >

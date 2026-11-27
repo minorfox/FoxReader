@@ -594,9 +594,12 @@ function registerIpcHandlers(): void {
     database.movePaperToFolder(paperId, folderId),
   );
 
-  ipcMain.handle('papers:updateProgress', (_event, paperId: string, lastPage: number, lastZoom: number) => {
-    database.updatePaperProgress(paperId, lastPage, lastZoom);
-  });
+  ipcMain.handle(
+    'papers:updateProgress',
+    (_event, paperId: string, lastPage: number, lastZoom: number, lastScrollRatio?: number) => {
+      database.updatePaperProgress(paperId, lastPage, lastZoom, lastScrollRatio);
+    },
+  );
 
   ipcMain.handle('papers:delete', async (_event, paperId: string) => {
     await database.deletePaper(paperId, settingsManager.getDataDir());
